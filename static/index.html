@@ -529,24 +529,24 @@ function renderSessions(sessions) {
 
   tbody.innerHTML = sessions.map(s => {
     const stateLabel = s.state === 'needs_input' ? 'input' : s.state;
-    const rcUrl = s.remote_control_url || null;
+    const rcUrl = s.remoteControlUrl || null;
     const canStop = ['working', 'needs_input', 'idle'].includes(s.state);
     const canRespawn = ['stopped', 'completed', 'failed'].includes(s.state);
     const canRemove = ['stopped', 'completed', 'failed'].includes(s.state);
 
     return `<tr>
-      <td><span class="cell-id">${s.short_id}</span></td>
+      <td><span class="cell-id">${s.shortId}</span></td>
       <td><span class="cell-name">${s.name || '—'}</span></td>
       <td><span class="badge badge-${s.state}">${stateLabel}</span></td>
       <td><span class="cell-prompt" title="${(s.prompt || '').replace(/"/g, '&quot;')}">${s.prompt || '—'}</span></td>
       <td><span class="cell-cwd" title="${s.cwd || ''}">${shortPath(s.cwd)}</span></td>
-      <td><span class="cell-time" title="${s.created_at || ''}">${relativeTime(s.created_at)}</span></td>
+      <td><span class="cell-time" title="${s.createdAt || ''}">${relativeTime(s.createdAt)}</span></td>
       <td>
         <div class="actions">
-          <button class="btn-action" onclick="viewLogs('${s.short_id}')">logs</button>
-          ${canStop ? `<button class="btn-action" onclick="stopSession('${s.short_id}')">stop</button>` : ''}
-          ${canRespawn ? `<button class="btn-action" onclick="respawnSession('${s.short_id}')">respawn</button>` : ''}
-          ${canRemove ? `<button class="btn-action danger" onclick="removeSession('${s.short_id}')">rm</button>` : ''}
+          <button class="btn-action" onclick="viewLogs('${s.shortId}')">logs</button>
+          ${canStop ? `<button class="btn-action" onclick="stopSession('${s.shortId}')">stop</button>` : ''}
+          ${canRespawn ? `<button class="btn-action" onclick="respawnSession('${s.shortId}')">respawn</button>` : ''}
+          ${canRemove ? `<button class="btn-action danger" onclick="removeSession('${s.shortId}')">rm</button>` : ''}
           ${rcUrl ? `<a class="btn-action rc-link" href="${rcUrl}" target="_blank" rel="noopener">RC ↗</a>` : ''}
         </div>
       </td>
@@ -584,10 +584,10 @@ form.addEventListener('submit', async (e) => {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || res.statusText);
+      throw new Error(err.error || res.statusText);
     }
     const session = await res.json();
-    toast(`Session ${session.short_id} launched`);
+    toast(`Session ${session.shortId} launched`);
     document.getElementById('prompt').value = '';
     document.getElementById('name').value = '';
     document.getElementById('cwd').value = '';

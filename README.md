@@ -16,28 +16,29 @@ Launch, monitor, stop, respawn, and remove `claude --bg` sessions from a browser
 ## Install
 
 ```bash
-uv tool install git+https://github.com/dakesan/claude-session-manager.git
+npm install -g claude-session-manager
 ```
 
-Or for development:
+Or from source:
 
 ```bash
 git clone https://github.com/dakesan/claude-session-manager.git
 cd claude-session-manager
-uv sync
+npm install
+npm run build
 ```
 
 ## Usage
 
 ```bash
-# Start the server
-claude-session-manager serve
+# Start the server (default: 0.0.0.0:8321)
+claude-session-manager
 
-# Custom host/port
-claude-session-manager serve --host 127.0.0.1 --port 9000
+# Custom host/port via env vars
+PORT=9000 HOST=127.0.0.1 claude-session-manager
 
-# Development mode with auto-reload
-claude-session-manager serve --reload
+# Development mode
+npm run dev
 ```
 
 Then open `http://<your-server>:8321` in your browser.
@@ -45,7 +46,7 @@ Then open `http://<your-server>:8321` in your browser.
 ## Architecture
 
 ```
-Browser (Tailscale) → FastAPI (port 8321) → Claude CLI
+Browser (Tailscale) → Hono server (port 8321) → Claude CLI
                           │
                           ├── GET  /api/sessions          → ls ~/.claude/jobs/
                           ├── POST /api/sessions          → claude --bg "prompt"
@@ -55,21 +56,11 @@ Browser (Tailscale) → FastAPI (port 8321) → Claude CLI
                           └── GET  /api/sessions/:id/logs → claude logs <id>
 ```
 
-The backend reads session state directly from `~/.claude/jobs/` and `~/.claude/daemon/roster.json`, then delegates actions to the `claude` CLI.
-
-## systemd (Optional)
-
-User-level service:
-
-```bash
-cp contrib/claude-session-manager-user.service ~/.config/systemd/user/claude-session-manager.service
-systemctl --user daemon-reload
-systemctl --user enable --now claude-session-manager
-```
+The backend reads session state directly from `~/.claude/jobs/` and delegates actions to the `claude` CLI.
 
 ## Requirements
 
-- Python 3.11+
+- Node.js 18+
 - Claude Code CLI (`claude`) installed and authenticated
 - Recommended: Tailscale for secure remote access
 

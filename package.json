@@ -1,0 +1,38 @@
+{
+  "name": "claude-session-manager",
+  "version": "0.1.0",
+  "description": "Web-based session manager for Claude Code background sessions and remote control",
+  "type": "module",
+  "bin": {
+    "claude-session-manager": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dakesan/claude-session-manager.git"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "session-manager"
+  ],
+  "author": "dakesan",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/dakesan/claude-session-manager/issues"
+  },
+  "homepage": "https://github.com/dakesan/claude-session-manager#readme",
+  "dependencies": {
+    "@hono/node-server": "^2.0.2",
+    "hono": "^4.12.18"
+  },
+  "devDependencies": {
+    "@types/node": "^25.8.0",
+    "tsx": "^4.22.0",
+    "typescript": "^6.0.3"
+  }
+}
