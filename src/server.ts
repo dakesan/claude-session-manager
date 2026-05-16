@@ -81,12 +81,41 @@ app.get("/api/roster", async (c) => {
 
 // --- Static file serving ---
 
+const MIME_TYPES: Record<string, string> = {
+  ".html": "text/html",
+  ".css": "text/css",
+  ".js": "application/javascript",
+  ".jsx": "text/babel",
+  ".json": "application/json",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".ico": "image/x-icon",
+};
+
 app.get("/", async (c) => {
   try {
     const html = await readFile(join(STATIC_DIR, "index.html"), "utf-8");
     return c.html(html);
   } catch {
     return c.text("index.html not found", 404);
+  }
+});
+
+// Serve any static file from static/
+app.get("/:file{.+\\..+}", async (c) => {
+  const file = c.req.param("file");
+  // Prevent path traversal
+  if (file.includes("..")) return c.text("Forbidden", 403);
+  const filePath = join(STATIC_DIR, file);
+  try {
+    const content = await readFile(filePath);
+    const ext = "." + file.split(".").pop();
+    const mime = MIME_TYPES[ext] || "application/octet-stream";
+    return new Response(content, {
+      headers: { "Content-Type": mime },
+    });
+  } catch {
+    return c.text("Not found", 404);
   }
 });
 
