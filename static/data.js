@@ -3,17 +3,14 @@
 
 const API = "/api";
 
-// ─── Static config (will be populated from /api/roster and /api/sessions) ────
+// ─── Static config ───────────────────────────────────────────────────────────
 
 window.PROJECTS = [];
 window.REMOTE_CONTROLS = [];
 window.STATUS_ORDER = ["working", "queued", "needs_input", "idle", "completed", "stopped", "failed"];
 window.SEED_SESSIONS = [];
 
-// ─── Log templates (used by the drawer's synthetic log streamer) ─────────────
-// In production the Logs tab will call /api/sessions/:id/logs instead,
-// but we keep this so the prototype streamer still works for sessions
-// that are actively working.
+// ─── Log templates (fallback for synthetic streamer) ─────────────────────────
 window.LOG_TEMPLATES = {
   default: [
     ["info", "system", "session started"],
@@ -24,19 +21,10 @@ window.LOG_TEMPLATES = {
   ],
 };
 
-// ─── Map backend session → prototype session shape ───────────────────────────
+// ─── Map backend session → frontend session shape ────────────────────────────
 function mapSession(s) {
-  // Backend state → prototype status
-  const stateMap = {
-    working: "working",
-    needs_input: "idle",
-    idle: "idle",
-    completed: "done",
-    failed: "error",
-    stopped: "stopped",
-    unknown: "stopped",
-  };
-
+  // Backend returns: sessionId, shortId, name, state, prompt, cwd,
+  //                  createdAt, pid, projectSlug, gitBranch, model, version
   const startedAt = s.createdAt ? new Date(s.createdAt).getTime() : Date.now();
   const duration = Math.floor((Date.now() - startedAt) / 1000);
 
@@ -44,8 +32,8 @@ function mapSession(s) {
     id: s.shortId,
     name: s.name || s.shortId,
     prompt: s.prompt || "(no prompt)",
-    status: stateMap[s.state] || "stopped",
-    project: "default",
+    status: s.state || "stopped",
+    project: s.projectSlug || "default",
     startedAt,
     duration,
     turns: 0,
@@ -53,12 +41,13 @@ function mapSession(s) {
     tokensOut: 0,
     cost: 0,
     worktree: null,
-    branch: null,
+    branch: s.gitBranch || null,
     rc: null,
-    model: "unknown",
+    model: s.model || "unknown",
     cwd: s.cwd || null,
-    // Keep original state for API calls
-    _backendState: s.state,
+    pid: s.pid || null,
+    sessionId: s.sessionId,
+    version: s.version || null,
   };
 }
 
@@ -100,23 +89,24 @@ window.CSM_API = {
     return mapSession(await res.json());
   },
 
-  async stopSession(shortId) {
-    const res = await fetch(`${API}/sessions/${shortId}/stop`, { method: "POST" });
+  async stopSession(id) {
+    // id here is shortId; backend accepts both shortId and sessionId
+    const res = await fetch(`${API}/sessions/${id}/stop`, { method: "POST" });
     if (!res.ok) throw new Error((await res.json()).error || res.statusText);
   },
 
-  async respawnSession(shortId) {
-    const res = await fetch(`${API}/sessions/${shortId}/respawn`, { method: "POST" });
+  async respawnSession(id) {
+    const res = await fetch(`${API}/sessions/${id}/respawn`, { method: "POST" });
     if (!res.ok) throw new Error((await res.json()).error || res.statusText);
   },
 
-  async removeSession(shortId) {
-    const res = await fetch(`${API}/sessions/${shortId}`, { method: "DELETE" });
+  async removeSession(id) {
+    const res = await fetch(`${API}/sessions/${id}`, { method: "DELETE" });
     if (!res.ok) throw new Error((await res.json()).error || res.statusText);
   },
 
-  async getLogs(shortId) {
-    const res = await fetch(`${API}/sessions/${shortId}/logs`);
+  async getLogs(id) {
+    const res = await fetch(`${API}/sessions/${id}/logs`);
     if (!res.ok) return "(error fetching logs)";
     const data = await res.json();
     return data.logs || "(no output)";
@@ -131,12 +121,11 @@ window.CSM_API = {
   window.SEED_SESSIONS = sessions;
   window.PROJECTS = deriveProjects(sessions);
 
-  // Try to get roster for Remote Control info
+  // Get roster (process info)
   try {
     const res = await fetch(`${API}/roster`);
     if (res.ok) {
       const roster = await res.json();
-      // If roster has RC info, populate REMOTE_CONTROLS
       if (Array.isArray(roster.remoteControls)) {
         window.REMOTE_CONTROLS = roster.remoteControls;
       }
@@ -145,6 +134,5 @@ window.CSM_API = {
     // ignore
   }
 
-  // Signal that data is ready (app.jsx polls this)
   window._CSM_DATA_READY = true;
 })();

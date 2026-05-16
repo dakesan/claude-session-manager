@@ -140,8 +140,53 @@ function DetailTab({ s }) {
   );
 }
 
+function useRealLogs(session) {
+  const [lines, setLines] = useS([]);
+  const [loading, setLoading] = useS(false);
+  const lastId = useR(null);
+
+  useE(() => {
+    if (!session?.sessionId && !session?.id) return;
+    const id = session.sessionId || session.id;
+    if (id === lastId.current) return;
+    lastId.current = id;
+    setLoading(true);
+    setLines([]);
+
+    const fetchLogs = async () => {
+      if (!window.CSM_API) return;
+      try {
+        const raw = await window.CSM_API.getLogs(id);
+        const parsed = raw.split("\n").filter(Boolean).map((line, i) => {
+          const sev = line.startsWith("[user]") ? "info"
+            : line.startsWith("[assistant]") ? "ok"
+            : line.startsWith("[system]") ? "tool"
+            : line.startsWith("[title]") ? "info"
+            : "info";
+          const ch = line.match(/^\[(\w+)\]/)?.[1] || "log";
+          const m = line.replace(/^\[\w+\]\s*/, "");
+          return { id: i, sev, ch, m, t: Date.now() - (raw.split("\n").length - i) * 1000 };
+        });
+        setLines(parsed);
+      } catch {
+        setLines([{ id: 0, sev: "err", ch: "error", m: "Failed to fetch logs", t: Date.now() }]);
+      }
+      setLoading(false);
+    };
+
+    fetchLogs();
+    // Re-fetch every 5 seconds for working sessions
+    if (session.status === "working") {
+      const i = setInterval(fetchLogs, 5000);
+      return () => clearInterval(i);
+    }
+  }, [session?.sessionId, session?.id, session?.status]);
+
+  return { lines, loading };
+}
+
 function LogsTab({ s, paused, onTogglePause }) {
-  const lines = useStreamingLogs(s, paused);
+  const { lines, loading } = useRealLogs(s);
   const ref = useR(null);
   useE(() => {
     if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
@@ -150,26 +195,29 @@ function LogsTab({ s, paused, onTogglePause }) {
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-        <span className="pill"><span className="dot" data-status={s.status === "working" && !paused ? "working" : "stopped"} style={{ width: 6, height: 6 }} />
-          {s.status === "working" && !paused ? "streaming" : paused ? "paused" : "static"}
+        <span className="pill"><span className="dot" data-status={s.status === "working" ? "working" : "stopped"} style={{ width: 6, height: 6 }} />
+          {loading ? "loading" : s.status === "working" ? "live" : "static"}
         </span>
         <span style={{ fontSize: 11, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>{lines.length} lines</span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-          {s.status === "working" && (
-            <button className="btn btn-ghost" onClick={onTogglePause} title={paused ? "Resume" : "Pause"}>
-              {paused ? <Ico.play /> : <Ico.pause />} {paused ? "Resume" : "Pause"}
-            </button>
-          )}
-          <button className="btn btn-ghost" title="Copy"><Ico.copy /> Copy</button>
+          <button className="btn btn-ghost" title="Copy" onClick={() => {
+            const text = lines.map(l => `[${l.ch}] ${l.m}`).join("\n");
+            navigator.clipboard?.writeText(text);
+          }}><Ico.copy /> Copy</button>
         </div>
       </div>
 
       <div className="logs" ref={ref}>
+        {lines.length === 0 && !loading && (
+          <div style={{ padding: 20, textAlign: "center", color: "var(--text-dim)", fontSize: 12 }}>
+            No log output yet
+          </div>
+        )}
         {lines.map((l, i) => (
           <div key={l.id} className="line" data-sev={l.sev}>
             <span className="t">{fmtClock(l.t)}</span>
             <span className="sev">{sevGlyph(l.sev)}</span>
-            <span className={"m" + (i === lines.length - 1 && s.status === "working" && !paused ? " caret" : "")}>
+            <span className={"m" + (i === lines.length - 1 && s.status === "working" ? " caret" : "")}>
               <LogMessage ch={l.ch} m={l.m} />
             </span>
           </div>
