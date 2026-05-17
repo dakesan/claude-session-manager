@@ -1,6 +1,6 @@
 # Claude Session Manager (CSM)
 
-Web dashboard + REST API for managing Claude Code interactive sessions with Remote Control.
+Web dashboard + REST API + MCP server for managing Claude Code interactive sessions with Remote Control.
 
 Sessions run as **interactive** Claude processes (not `-p` programmatic mode), using regular Claude Max credits. Each session launches inside a tmux pane with `--remote-control` enabled, making it accessible from claude.ai/code or the Claude mobile app.
 
@@ -26,7 +26,7 @@ Base URL: `http://<host>:8321`
 curl http://localhost:8321/api/health
 ```
 
-Response: `{"status":"ok","version":"0.4.0","uptime":123.45}`
+Response: `{"status":"ok","version":"0.5.0","uptime":123.45}`
 
 ### List Sessions
 
@@ -123,6 +123,60 @@ echo $SESSION | jq -r '.rcUrl'
 # 4. When done, stop or remove
 curl -X DELETE http://lab:8321/api/sessions/$(echo $SESSION | jq -r '.shortId')
 ```
+
+## MCP Server
+
+CSM includes an MCP (Model Context Protocol) server that lets Claude Code manage sessions directly.
+
+### Setup
+
+Add to your `~/.claude.json` (or `claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "claude-session-manager": {
+      "command": "node",
+      "args": ["/path/to/claude-session-manager/dist/mcp-cli.js"],
+      "env": {
+        "CSM_URL": "http://localhost:8321"
+      }
+    }
+  }
+}
+```
+
+Or with npx (after npm publish):
+
+```json
+{
+  "mcpServers": {
+    "claude-session-manager": {
+      "command": "npx",
+      "args": ["-y", "claude-session-manager-mcp"],
+      "env": {
+        "CSM_URL": "http://lab:8321"
+      }
+    }
+  }
+}
+```
+
+Set `CSM_URL` to the address of your running CSM server (e.g. `http://lab:8321` over Tailscale).
+
+### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `list_sessions` | List all managed sessions |
+| `get_session` | Get details of a specific session |
+| `create_session` | Create a new interactive Claude session with Remote Control |
+| `stop_session` | Stop a running session |
+| `remove_session` | Stop and remove a session |
+| `respawn_session` | Re-create a stopped session |
+| `get_logs` | Get session transcript |
+| `refresh_rc_url` | Re-scan tmux pane for Remote Control URL |
+| `health` | Check CSM server status |
 
 ## Architecture
 

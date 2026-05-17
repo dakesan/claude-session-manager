@@ -1,10 +1,11 @@
 {
   "name": "claude-session-manager",
-  "version": "0.1.0",
-  "description": "Web-based session manager for Claude Code background sessions and remote control",
+  "version": "0.5.0",
+  "description": "Web dashboard + REST API + MCP server for managing Claude Code interactive sessions with Remote Control",
   "type": "module",
   "bin": {
-    "claude-session-manager": "./dist/cli.js"
+    "claude-session-manager": "./dist/cli.js",
+    "claude-session-manager-mcp": "./dist/mcp-cli.js"
   },
   "scripts": {
     "build": "tsc",
@@ -18,7 +19,9 @@
   "keywords": [
     "claude",
     "claude-code",
-    "session-manager"
+    "session-manager",
+    "mcp",
+    "remote-control"
   ],
   "author": "dakesan",
   "license": "MIT",
@@ -28,7 +31,9 @@
   "homepage": "https://github.com/dakesan/claude-session-manager#readme",
   "dependencies": {
     "@hono/node-server": "^2.0.2",
-    "hono": "^4.12.18"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "hono": "^4.12.18",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^25.8.0",
