@@ -195,7 +195,6 @@ function SessionTable({ sessions, selectedId, onSelect, onAction }) {
                   ) : (
                     <button title="Respawn" onClick={(e) => { e.stopPropagation(); onAction("respawn", s); }}><Ico.refresh /></button>
                   )}
-                  <button title="Attach" onClick={(e) => { e.stopPropagation(); onAction("attach", s); }}><Ico.terminal /></button>
                   <button title="Remove" onClick={(e) => { e.stopPropagation(); onAction("rm", s); }}><Ico.trash /></button>
                 </span>
               </td>

@@ -264,23 +264,65 @@ function TranscriptTab({ s }) {
   );
 }
 
+// ─── Dropdown menu ──────────────────────────────────────────────────────────
+function DropdownMenu({ open, onClose, items }) {
+  const ref = useR(null);
+  useE(() => {
+    if (!open) return;
+    const fn = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
+    document.addEventListener("mousedown", fn);
+    return () => document.removeEventListener("mousedown", fn);
+  }, [open, onClose]);
+
+  if (!open) return null;
+  return (
+    <div ref={ref} className="dropdown-menu">
+      {items.map((item, i) => item.separator ? (
+        <div key={i} className="dropdown-sep" />
+      ) : (
+        <button key={i} className={"dropdown-item" + (item.danger ? " danger" : "")} onClick={() => { item.onClick(); onClose(); }}>
+          {item.icon} <span>{item.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // ─── Drawer shell ────────────────────────────────────────────────────────────
 function Drawer({ session, onClose, onAction, toast }) {
   const [tab, setTab] = useS("detail");
   const [paused, setPaused] = useS(false);
-  useE(() => { setTab("detail"); setPaused(false); }, [session?.id]);
+  const [menuOpen, setMenuOpen] = useS(false);
+  useE(() => { setTab("detail"); setPaused(false); setMenuOpen(false); }, [session?.id]);
 
   useE(() => {
-    const fn = (e) => { if (e.key === "Escape" && session) onClose(); };
+    const fn = (e) => {
+      if (e.key === "Escape" && session) {
+        if (menuOpen) setMenuOpen(false);
+        else onClose();
+      }
+    };
     window.addEventListener("keydown", fn);
     return () => window.removeEventListener("keydown", fn);
-  }, [session, onClose]);
+  }, [session, onClose, menuOpen]);
 
   if (!session) return <div className="drawer" data-open="false" />;
   const s = session;
 
   const canStop = s.status === "working" || s.status === "idle" || s.status === "queued";
   const canRespawn = s.status === "done" || s.status === "stopped" || s.status === "error";
+
+  const menuItems = [
+    { label: "Copy session ID", icon: <Ico.copy />, onClick: () => navigator.clipboard?.writeText(s.sessionId || s.id) },
+    { label: "Copy logs", icon: <Ico.copy />, onClick: async () => {
+      if (window.CSM_API) {
+        const logs = await window.CSM_API.getLogs(s.sessionId || s.id);
+        navigator.clipboard?.writeText(logs);
+      }
+    }},
+    { separator: true },
+    { label: "Remove session", icon: <Ico.trash />, danger: true, onClick: () => onAction("rm", s) },
+  ];
 
   return (
     <div className="drawer" data-open="true">
@@ -294,13 +336,15 @@ function Drawer({ session, onClose, onAction, toast }) {
       </div>
 
       <div className="drawer-actions">
-        <button className="btn"><Ico.terminal /> Attach</button>
         {canStop && <button className="btn btn-danger" onClick={() => onAction("stop", s)}><Ico.stop /> Stop</button>}
         {canRespawn && <button className="btn" onClick={() => onAction("respawn", s)}><Ico.refresh /> Respawn</button>}
-        {s.rc && <button className="btn"><Ico.link /> Open in RC <Ico.ext /></button>}
+        <a className="btn" href="https://claude.ai/remotecontrol" target="_blank" rel="noopener"><Ico.link /> Remote Control <Ico.ext /></a>
         <div style={{ flex: 1 }} />
         <button className="btn btn-ghost"><Ico.branch /> {s.branch || "no branch"}</button>
-        <button className="btn btn-ghost btn-icon" title="More"><Ico.dots /></button>
+        <div style={{ position: "relative" }}>
+          <button className="btn btn-ghost btn-icon" title="More" onClick={() => setMenuOpen(!menuOpen)}><Ico.dots /></button>
+          <DropdownMenu open={menuOpen} onClose={() => setMenuOpen(false)} items={menuItems} />
+        </div>
       </div>
 
       <div className="drawer-tabs">

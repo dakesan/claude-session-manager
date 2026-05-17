@@ -19,13 +19,24 @@ import {
   unlink,
 } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { join, basename } from "node:path";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
+
+// ─── Binary paths (mise-managed) ────────────────────────────────────────────
+
+const TMUX_BIN = join(
+  homedir(),
+  ".local/share/mise/installs/tmux/3.6a/tmux",
+);
+const CLAUDE_BIN = join(
+  homedir(),
+  ".local/share/mise/installs/claude/2.1.143/claude",
+);
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -60,6 +71,8 @@ export interface Session {
   model?: string;
   /** CLI version */
   version?: string;
+  /** tmux session name (for CSM-managed sessions) */
+  tmuxSession?: string;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -150,16 +163,29 @@ async function readCsmSessions(): Promise<Session[]> {
       const raw = await readFile(join(csmDir, entry), "utf-8");
       const data = JSON.parse(raw);
       const alive = data.pid ? isProcessAlive(data.pid) : false;
+      // For tmux-managed sessions, also check if the tmux session is alive
+      let state: SessionState = alive ? "working" : "stopped";
+      if (!alive && data.tmuxSession) {
+        try {
+          await execAsync(
+            `${TMUX_BIN} has-session -t '${data.tmuxSession}' 2>/dev/null`,
+          );
+          state = "working"; // tmux session exists even if PID detection failed
+        } catch {
+          // tmux session doesn't exist either
+        }
+      }
       sessions.push({
         sessionId: data.sessionId,
         shortId: shortId(data.sessionId),
         name: data.name,
-        state: alive ? "working" : "stopped",
+        state,
         prompt: data.prompt,
         cwd: data.cwd,
         createdAt: data.createdAt,
         pid: data.pid,
         model: data.model,
+        tmuxSession: data.tmuxSession,
       });
     } catch {
       // skip
@@ -315,33 +341,99 @@ export async function getRoster(): Promise<Record<string, unknown>> {
   }
 }
 
+/**
+ * Launch an interactive Claude session inside a tmux pane with Remote Control enabled.
+ *
+ * Flow:
+ *   1. `tmux new-session -d -s csm-<short> -c <cwd> -- claude --session-id <uuid> --remote-control <name>`
+ *   2. Wait briefly for the claude process to start
+ *   3. Extract the PID of the child claude process from the tmux pane
+ *   4. Send the initial prompt via `tmux send-keys`
+ *   5. Persist metadata for CSM tracking
+ *
+ * IMPORTANT: NO `-p` flag — this launches an interactive session that uses
+ * regular Claude Max credits, not programmatic credits.
+ */
 export async function createSession(
   prompt: string,
   name?: string,
   cwd?: string,
 ): Promise<Session> {
   const sessionId = randomUUID();
+  const sid = shortId(sessionId);
   const workDir = cwd || process.cwd();
+  const tmuxSession = `csm-${sid}`;
+  const rcName = name || `csm-${sid}`;
 
-  // Launch claude -p in background
-  const args = [
-    "-p",
+  // Build the claude command to run inside tmux
+  const claudeCmd = [
+    CLAUDE_BIN,
     "--session-id",
     sessionId,
+    "--remote-control",
+    rcName,
     "--dangerously-skip-permissions",
-    prompt,
-  ];
+  ]
+    .map((a) => `'${a.replace(/'/g, "'\\''")}'`)
+    .join(" ");
 
-  const child = spawn("claude", args, {
-    cwd: workDir,
-    detached: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  child.unref();
+  // Launch tmux detached session
+  await execAsync(
+    [
+      TMUX_BIN,
+      "new-session",
+      "-d",
+      "-s",
+      tmuxSession,
+      "-c",
+      workDir,
+      "--",
+      "bash",
+      "-c",
+      `${claudeCmd}; echo '[CSM] claude exited'; sleep 10`,
+    ]
+      .map((a) => `'${a.replace(/'/g, "'\\''")}'`)
+      .join(" "),
+  );
 
-  const pid = child.pid;
-  if (!pid) {
-    throw new Error("Failed to spawn claude process");
+  // Wait a moment for the claude process to initialize
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+
+  // Extract PID of the claude process running inside the tmux pane
+  let pid: number | undefined;
+  try {
+    const { stdout } = await execAsync(
+      `${TMUX_BIN} list-panes -t '${tmuxSession}' -F '#{pane_pid}'`,
+    );
+    const shellPid = parseInt(stdout.trim(), 10);
+    if (shellPid) {
+      // The shell PID is the parent; claude is a child of it
+      const { stdout: children } = await execAsync(
+        `ps --ppid ${shellPid} -o pid= 2>/dev/null || true`,
+      );
+      const childPids = children
+        .trim()
+        .split("\n")
+        .map((l) => parseInt(l.trim(), 10))
+        .filter(Boolean);
+      // Pick the first child (the claude process)
+      pid = childPids[0] || shellPid;
+    }
+  } catch {
+    // PID extraction failed — non-fatal, we can still track by tmux session name
+  }
+
+  // Send the initial prompt after claude has started
+  // Use a short delay to let the TUI initialize
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  try {
+    // Escape the prompt for tmux send-keys
+    const escapedPrompt = prompt.replace(/\\/g, "\\\\").replace(/'/g, "'\\''");
+    await execAsync(
+      `${TMUX_BIN} send-keys -t '${tmuxSession}' '${escapedPrompt}' Enter`,
+    );
+  } catch {
+    // Prompt sending failed — the session is still running, user can interact via RC
   }
 
   // Persist session metadata for CSM tracking
@@ -352,11 +444,12 @@ export async function createSession(
 
   const meta = {
     sessionId,
-    pid,
-    name: name || undefined,
+    pid: pid || undefined,
+    name: rcName,
     prompt,
     cwd: workDir,
     createdAt: new Date().toISOString(),
+    tmuxSession,
     model: undefined,
   };
 
@@ -367,8 +460,8 @@ export async function createSession(
 
   return {
     sessionId,
-    shortId: shortId(sessionId),
-    name,
+    shortId: sid,
+    name: rcName,
     state: "working",
     prompt,
     cwd: workDir,
@@ -379,17 +472,54 @@ export async function createSession(
 
 export async function stopSession(id: string): Promise<boolean> {
   const session = await getSession(id);
-  if (!session?.pid) return false;
+  if (!session) return false;
 
-  // If process is already dead, treat as success
-  if (!isProcessAlive(session.pid)) return true;
+  // Try to kill the tmux session first (cleanest shutdown)
+  const tmuxSession = await getTmuxSessionName(session);
+  if (tmuxSession) {
+    try {
+      await execAsync(`${TMUX_BIN} kill-session -t '${tmuxSession}'`);
+      return true;
+    } catch {
+      // tmux session might already be dead — fall through to PID-based kill
+    }
+  }
 
+  // Fallback: kill by PID
+  if (session.pid) {
+    if (!isProcessAlive(session.pid)) return true;
+    try {
+      process.kill(session.pid, "SIGTERM");
+      return true;
+    } catch {
+      return true;
+    }
+  }
+
+  return true;
+}
+
+/** Resolve tmux session name from session object or convention */
+async function getTmuxSessionName(session: Session): Promise<string | null> {
+  // Direct from session object (populated by readCsmSessions)
+  if (session.tmuxSession) return session.tmuxSession;
+
+  // Check CSM metadata file for tmuxSession field
+  const csmFile = join(getCsmDir(), `${session.sessionId}.json`);
   try {
-    process.kill(session.pid, "SIGTERM");
-    return true;
+    const raw = JSON.parse(await readFile(csmFile, "utf-8"));
+    if (raw.tmuxSession) return raw.tmuxSession;
   } catch {
-    // ESRCH = process doesn't exist = already stopped
-    return true;
+    // no CSM file or malformed
+  }
+
+  // Convention: csm-<shortId>
+  const candidate = `csm-${session.shortId}`;
+  try {
+    await execAsync(`${TMUX_BIN} has-session -t '${candidate}' 2>/dev/null`);
+    return candidate;
+  } catch {
+    return null;
   }
 }
 
@@ -423,13 +553,9 @@ export async function removeSession(id: string): Promise<boolean> {
   const session = await getSession(id);
   if (!session) return false;
 
-  // Stop if still running
-  if (session.state === "working" && session.pid) {
-    try {
-      process.kill(session.pid, "SIGTERM");
-    } catch {
-      // already dead
-    }
+  // Stop if still running (tmux kill or PID kill)
+  if (session.state === "working") {
+    await stopSession(id);
   }
 
   // Remove CSM tracking file
