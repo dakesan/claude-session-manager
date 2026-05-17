@@ -17,6 +17,10 @@ const app = new Hono();
 
 // --- API routes ---
 
+app.get("/api/health", (c) => {
+  return c.json({ status: "ok", version: "0.4.0", uptime: process.uptime() });
+});
+
 app.get("/api/sessions", async (c) => {
   const sessions = await cli.listSessions();
   return c.json(sessions);
