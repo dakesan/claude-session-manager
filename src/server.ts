@@ -74,6 +74,12 @@ app.get("/api/sessions/:id/logs", async (c) => {
   return c.json({ shortId: id, logs });
 });
 
+app.get("/api/sessions/:id/rc-url", async (c) => {
+  const id = c.req.param("id");
+  const rcUrl = await cli.refreshRcUrl(id);
+  return c.json({ shortId: id, rcUrl: rcUrl || null });
+});
+
 app.get("/api/roster", async (c) => {
   const roster = await cli.getRoster();
   return c.json(roster);

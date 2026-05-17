@@ -73,6 +73,8 @@ export interface Session {
   version?: string;
   /** tmux session name (for CSM-managed sessions) */
   tmuxSession?: string;
+  /** Remote Control URL (e.g. https://claude.ai/code/session_...) */
+  rcUrl?: string;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -186,6 +188,7 @@ async function readCsmSessions(): Promise<Session[]> {
         pid: data.pid,
         model: data.model,
         tmuxSession: data.tmuxSession,
+        rcUrl: data.rcUrl,
       });
     } catch {
       // skip
@@ -436,6 +439,15 @@ export async function createSession(
     // Prompt sending failed — the session is still running, user can interact via RC
   }
 
+  // Extract Remote Control URL from tmux pane output
+  // Claude prints something like "https://claude.ai/code/session_..." when RC starts
+  let rcUrl: string | undefined;
+  try {
+    rcUrl = await captureRcUrl(tmuxSession, 10);
+  } catch {
+    // RC URL extraction failed — non-fatal
+  }
+
   // Persist session metadata for CSM tracking
   const csmDir = getCsmDir();
   if (!existsSync(csmDir)) {
@@ -450,6 +462,7 @@ export async function createSession(
     cwd: workDir,
     createdAt: new Date().toISOString(),
     tmuxSession,
+    rcUrl: rcUrl || undefined,
     model: undefined,
   };
 
@@ -467,6 +480,7 @@ export async function createSession(
     cwd: workDir,
     createdAt: meta.createdAt,
     pid,
+    rcUrl,
   };
 }
 
@@ -521,6 +535,67 @@ async function getTmuxSessionName(session: Session): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Capture the Remote Control URL from tmux pane output.
+ * Claude prints the RC URL when it starts with --remote-control.
+ * We poll the pane content for up to `maxWaitSec` seconds looking for it.
+ */
+async function captureRcUrl(
+  tmuxSession: string,
+  maxWaitSec: number,
+): Promise<string | undefined> {
+  const interval = 2000;
+  const maxAttempts = Math.ceil((maxWaitSec * 1000) / interval);
+
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const { stdout } = await execAsync(
+        `${TMUX_BIN} capture-pane -t '${tmuxSession}' -p -S -50`,
+      );
+      // Look for claude.ai/code/session_ URL pattern
+      const match = stdout.match(/https:\/\/claude\.ai\/code\/session_\S+/);
+      if (match) return match[0];
+    } catch {
+      // tmux capture failed
+    }
+    if (i < maxAttempts - 1) {
+      await new Promise((resolve) => setTimeout(resolve, interval));
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Try to extract RC URL from a running session's tmux pane.
+ * Useful for sessions where rcUrl wasn't captured at creation time.
+ */
+export async function refreshRcUrl(id: string): Promise<string | undefined> {
+  const session = await getSession(id);
+  if (!session?.tmuxSession) return undefined;
+
+  try {
+    const { stdout } = await execAsync(
+      `${TMUX_BIN} capture-pane -t '${session.tmuxSession}' -p -S -100`,
+    );
+    const match = stdout.match(/https:\/\/claude\.ai\/code\/session_\S+/);
+    if (match) {
+      // Update the CSM metadata file
+      const csmFile = join(getCsmDir(), `${session.sessionId}.json`);
+      try {
+        const raw = JSON.parse(await readFile(csmFile, "utf-8"));
+        raw.rcUrl = match[0];
+        await writeFile(csmFile, JSON.stringify(raw, null, 2));
+      } catch {
+        // non-fatal
+      }
+      return match[0];
+    }
+  } catch {
+    // capture failed
+  }
+  return undefined;
 }
 
 export async function respawnSession(id: string): Promise<boolean> {

@@ -338,7 +338,7 @@ function Drawer({ session, onClose, onAction, toast }) {
       <div className="drawer-actions">
         {canStop && <button className="btn btn-danger" onClick={() => onAction("stop", s)}><Ico.stop /> Stop</button>}
         {canRespawn && <button className="btn" onClick={() => onAction("respawn", s)}><Ico.refresh /> Respawn</button>}
-        <a className="btn" href="https://claude.ai/code" target="_blank" rel="noopener"><Ico.link /> Remote Control <Ico.ext /></a>
+        <a className="btn" href={s.rc || "https://claude.ai/code"} target="_blank" rel="noopener"><Ico.link /> Remote Control <Ico.ext /></a>
         <div style={{ flex: 1 }} />
         <button className="btn btn-ghost"><Ico.branch /> {s.branch || "no branch"}</button>
         <div style={{ position: "relative" }}>

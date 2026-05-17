@@ -42,7 +42,7 @@ function mapSession(s) {
     cost: 0,
     worktree: null,
     branch: s.gitBranch || null,
-    rc: null,
+    rc: s.rcUrl || null,
     model: s.model || "unknown",
     cwd: s.cwd || null,
     pid: s.pid || null,
