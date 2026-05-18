@@ -59,7 +59,7 @@ function Header({ theme, onToggleTheme, query, onQuery, onNew, onOpenPalette }) 
     <header className="hdr">
       <div className="hdr-brand">
         <div className="hdr-brand-mark" aria-hidden="true">CS</div>
-        <div className="hdr-brand-title">Session Manager<span className="muted">v0.4</span></div>
+        <div className="hdr-brand-title">Session Manager<span className="muted">v0.5</span></div>
       </div>
 
       <div className="hdr-search">
@@ -168,7 +168,7 @@ function SessionTable({ sessions, selectedId, onSelect, onAction }) {
           <tr>
             <th style={{ width: 130 }}>Status</th>
             <th style={{ width: 90 }}>ID</th>
-            <th style={{ width: 160 }}>Name</th>
+            <th style={{ width: 220 }}>Name</th>
             <th>Prompt</th>
             <th style={{ width: 110 }}>Runtime</th>
             <th style={{ width: 110 }}>Tokens</th>

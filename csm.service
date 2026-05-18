@@ -1,0 +1,16 @@
+[Unit]
+Description=Claude Session Manager (CSM)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/oodake/ghq/github.com/dakesan/claude-session-manager
+ExecStart=/home/oodake/.local/share/mise/installs/node/24.11.1/bin/node dist/cli.js
+Restart=on-failure
+RestartSec=5
+Environment=NODE_ENV=production
+Environment=HOST=0.0.0.0
+Environment=PORT=8321
+
+[Install]
+WantedBy=default.target
