@@ -4,7 +4,7 @@
 
 import { readFile, readdir, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { fileURLToPath } from "node:url";
 
 import { Hono } from "hono";
@@ -19,7 +19,7 @@ const app = new Hono();
 // --- API routes ---
 
 app.get("/api/health", (c) => {
-  return c.json({ status: "ok", version: "0.5.0", uptime: process.uptime() });
+  return c.json({ status: "ok", version: "0.5.0", uptime: process.uptime(), hostname: hostname() });
 });
 
 app.get("/api/sessions", async (c) => {

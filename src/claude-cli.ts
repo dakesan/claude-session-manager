@@ -15,6 +15,7 @@ import {
   readdir,
   readFile,
   writeFile,
+  appendFile,
   mkdir,
   unlink,
 } from "node:fs/promises";
@@ -101,6 +102,58 @@ function isProcessAlive(pid: number): boolean {
 /** Derive short ID from session UUID */
 function shortId(sessionId: string): string {
   return sessionId.slice(0, 8);
+}
+
+// ─── Session lifecycle logging ───────────────────────────────────────────────
+
+/** Directory for CSM logs */
+function getLogDir(): string {
+  return join(getClaudeDir(), "csm-logs");
+}
+
+/** Append a timestamped entry to the session lifecycle log */
+async function logLifecycle(
+  sessionId: string,
+  name: string | undefined,
+  event: string,
+  detail?: string,
+): Promise<void> {
+  const logDir = getLogDir();
+  try {
+    await mkdir(logDir, { recursive: true });
+  } catch {
+    // already exists
+  }
+  const ts = new Date().toISOString();
+  const sid = shortId(sessionId);
+  const line = `${ts}  ${event.padEnd(18)}  ${sid}  ${name || "(unnamed)"}${detail ? "  " + detail : ""}\n`;
+  try {
+    await appendFile(join(logDir, "lifecycle.log"), line);
+  } catch {
+    // best-effort logging
+  }
+}
+
+/**
+ * Track previous session states to detect transitions.
+ * Map of sessionId → last known state.
+ */
+const _prevStates = new Map<string, SessionState>();
+
+/** Compare current sessions against previous states, log transitions */
+async function detectTransitions(sessions: Session[]): Promise<void> {
+  for (const s of sessions) {
+    const prev = _prevStates.get(s.sessionId);
+    if (prev && prev !== s.state) {
+      await logLifecycle(
+        s.sessionId,
+        s.name,
+        `${prev} → ${s.state}`,
+        s.pid ? `pid=${s.pid}` : undefined,
+      );
+    }
+    _prevStates.set(s.sessionId, s.state);
+  }
 }
 
 // ─── Session discovery ───────────────────────────────────────────────────────
@@ -308,6 +361,9 @@ export async function listSessions(): Promise<Session[]> {
     return tb - ta;
   });
 
+  // Detect and log state transitions (non-blocking)
+  detectTransitions(sessions).catch(() => {});
+
   return sessions;
 }
 
@@ -380,7 +436,7 @@ export async function createSession(
     .map((a) => `'${a.replace(/'/g, "'\\''")}'`)
     .join(" ");
 
-  // Launch tmux detached session
+  // Launch tmux detached session with remain-on-exit so pane stays after exit
   await execAsync(
     [
       TMUX_BIN,
@@ -393,38 +449,26 @@ export async function createSession(
       "--",
       "bash",
       "-c",
-      `${claudeCmd}; echo '[CSM] claude exited'; sleep 10`,
+      `${claudeCmd}; echo '[CSM] claude exited (exit code: '$?') at '$(date -Iseconds); exec sleep infinity`,
     ]
       .map((a) => `'${a.replace(/'/g, "'\\''")}'`)
       .join(" "),
   );
 
+  // Enable remain-on-exit so the pane survives even if bash exits
+  try {
+    await execAsync(
+      `${TMUX_BIN} set-option -t '${tmuxSession}' remain-on-exit on`,
+    );
+  } catch {
+    // non-fatal
+  }
+
   // Wait for the claude TUI to be ready (poll for the input prompt)
   await waitForTuiReady(tmuxSession, 15);
 
   // Extract PID of the claude process running inside the tmux pane
-  let pid: number | undefined;
-  try {
-    const { stdout } = await execAsync(
-      `${TMUX_BIN} list-panes -t '${tmuxSession}' -F '#{pane_pid}'`,
-    );
-    const shellPid = parseInt(stdout.trim(), 10);
-    if (shellPid) {
-      // The shell PID is the parent; claude is a child of it
-      const { stdout: children } = await execAsync(
-        `ps --ppid ${shellPid} -o pid= 2>/dev/null || true`,
-      );
-      const childPids = children
-        .trim()
-        .split("\n")
-        .map((l) => parseInt(l.trim(), 10))
-        .filter(Boolean);
-      // Pick the first child (the claude process)
-      pid = childPids[0] || shellPid;
-    }
-  } catch {
-    // PID extraction failed — non-fatal, we can still track by tmux session name
-  }
+  const pid = await extractClaudePid(tmuxSession);
 
   // Send the initial prompt after claude TUI is ready
   try {
@@ -469,7 +513,10 @@ export async function createSession(
     JSON.stringify(meta, null, 2),
   );
 
-  return {
+  // Log session creation
+  await logLifecycle(sessionId, rcName, "created", `pid=${pid || "?"} tmux=${tmuxSession}`);
+
+  const session: Session = {
     sessionId,
     shortId: sid,
     name: rcName,
@@ -480,17 +527,25 @@ export async function createSession(
     pid,
     rcUrl,
   };
+
+  // Seed initial state for transition detection
+  _prevStates.set(sessionId, "working");
+
+  return session;
 }
 
 export async function stopSession(id: string): Promise<boolean> {
   const session = await getSession(id);
   if (!session) return false;
 
+  await logLifecycle(session.sessionId, session.name, "stop-requested", `pid=${session.pid || "?"}`);
+
   // Try to kill the tmux session first (cleanest shutdown)
   const tmuxSession = await getTmuxSessionName(session);
   if (tmuxSession) {
     try {
       await execAsync(`${TMUX_BIN} kill-session -t '${tmuxSession}'`);
+      await logLifecycle(session.sessionId, session.name, "stopped", "via tmux kill-session");
       return true;
     } catch {
       // tmux session might already be dead — fall through to PID-based kill
@@ -499,9 +554,13 @@ export async function stopSession(id: string): Promise<boolean> {
 
   // Fallback: kill by PID
   if (session.pid) {
-    if (!isProcessAlive(session.pid)) return true;
+    if (!isProcessAlive(session.pid)) {
+      await logLifecycle(session.sessionId, session.name, "stopped", "pid already dead");
+      return true;
+    }
     try {
       process.kill(session.pid, "SIGTERM");
+      await logLifecycle(session.sessionId, session.name, "stopped", "via SIGTERM");
       return true;
     } catch {
       return true;
@@ -532,6 +591,35 @@ async function getTmuxSessionName(session: Session): Promise<string | null> {
     return candidate;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Extract the PID of the claude process running inside a tmux pane.
+ * The pane runs bash → claude, so we find the shell PID first,
+ * then look for the child claude process.
+ */
+async function extractClaudePid(
+  tmuxSession: string,
+): Promise<number | undefined> {
+  try {
+    const { stdout } = await execAsync(
+      `${TMUX_BIN} list-panes -t '${tmuxSession}' -F '#{pane_pid}'`,
+    );
+    const shellPid = parseInt(stdout.trim(), 10);
+    if (!shellPid) return undefined;
+
+    const { stdout: children } = await execAsync(
+      `ps --ppid ${shellPid} -o pid= 2>/dev/null || true`,
+    );
+    const childPids = children
+      .trim()
+      .split("\n")
+      .map((l) => parseInt(l.trim(), 10))
+      .filter(Boolean);
+    return childPids[0] || shellPid;
+  } catch {
+    return undefined;
   }
 }
 
@@ -632,6 +720,10 @@ export async function refreshRcUrl(id: string): Promise<string | undefined> {
 /**
  * Respawn a stopped session by resuming the existing session ID.
  * Uses `claude --resume <sessionId>` to restore conversation history.
+ *
+ * The sessionId was assigned via `--session-id <uuid>` at creation time,
+ * so it uniquely identifies the conversation even when multiple sessions
+ * share the same working directory.
  */
 export async function respawnSession(id: string): Promise<boolean> {
   const session = await getSession(id);
@@ -645,7 +737,16 @@ export async function respawnSession(id: string): Promise<boolean> {
   const tmuxSession = `csm-${sid}`;
   const rcName = session.name || `csm-${sid}`;
 
-  // Build the claude command with --resume to restore the session
+  // Kill any stale tmux session with the same name (leftover from previous run)
+  try {
+    await execAsync(
+      `${TMUX_BIN} kill-session -t '${tmuxSession}' 2>/dev/null`,
+    );
+  } catch {
+    // No stale session — expected
+  }
+
+  // Build the claude command with --resume to restore the exact session
   const claudeCmd = [
     CLAUDE_BIN,
     "--resume",
@@ -658,7 +759,7 @@ export async function respawnSession(id: string): Promise<boolean> {
     .join(" ");
 
   try {
-    // Launch tmux detached session with --resume
+    // Launch tmux detached session with --resume and remain-on-exit
     await execAsync(
       [
         TMUX_BIN,
@@ -671,57 +772,47 @@ export async function respawnSession(id: string): Promise<boolean> {
         "--",
         "bash",
         "-c",
-        `${claudeCmd}; echo '[CSM] claude exited'; sleep 10`,
+        `${claudeCmd}; echo '[CSM] claude exited (exit code: '$?') at '$(date -Iseconds); exec sleep infinity`,
       ]
         .map((a) => `'${a.replace(/'/g, "'\\''")}'`)
         .join(" "),
     );
 
+    // Enable remain-on-exit so the pane survives even if bash exits
+    try {
+      await execAsync(
+        `${TMUX_BIN} set-option -t '${tmuxSession}' remain-on-exit on`,
+      );
+    } catch {
+      // non-fatal
+    }
+
     // Wait for TUI to be ready
     await waitForTuiReady(tmuxSession, 15);
 
     // Extract PID
-    let pid: number | undefined;
-    try {
-      const { stdout } = await execAsync(
-        `${TMUX_BIN} list-panes -t '${tmuxSession}' -F '#{pane_pid}'`,
-      );
-      const shellPid = parseInt(stdout.trim(), 10);
-      if (shellPid) {
-        const { stdout: children } = await execAsync(
-          `ps --ppid ${shellPid} -o pid= 2>/dev/null || true`,
-        );
-        const childPids = children
-          .trim()
-          .split("\n")
-          .map((l) => parseInt(l.trim(), 10))
-          .filter(Boolean);
-        pid = childPids[0] || shellPid;
-      }
-    } catch {
-      // non-fatal
-    }
+    const pid = await extractClaudePid(tmuxSession);
 
-    // Capture RC URL
-    let rcUrl: string | undefined;
-    try {
-      rcUrl = await captureRcUrl(tmuxSession, 10);
-    } catch {
-      // non-fatal
-    }
+    // Capture RC URL (always overwrite — old URL is invalid after respawn)
+    const rcUrl = await captureRcUrl(tmuxSession, 10);
 
     // Update the CSM metadata file
     const csmFile = join(getCsmDir(), `${session.sessionId}.json`);
     if (existsSync(csmFile)) {
       const raw = JSON.parse(await readFile(csmFile, "utf-8"));
-      raw.pid = pid || raw.pid;
+      if (pid) raw.pid = pid;
       raw.tmuxSession = tmuxSession;
-      raw.rcUrl = rcUrl || raw.rcUrl;
+      if (rcUrl) raw.rcUrl = rcUrl;
       await writeFile(csmFile, JSON.stringify(raw, null, 2));
     }
 
+    // Log respawn
+    await logLifecycle(session.sessionId, session.name, "respawned", `pid=${pid || "?"} tmux=${tmuxSession}`);
+    _prevStates.set(session.sessionId, "working");
+
     return true;
-  } catch {
+  } catch (e) {
+    await logLifecycle(session.sessionId, session.name, "respawn-failed", e instanceof Error ? e.message : String(e));
     return false;
   }
 }

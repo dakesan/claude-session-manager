@@ -264,6 +264,186 @@ function TranscriptTab({ s }) {
   );
 }
 
+// ─── Shared terminal creation helper ─────────────────────────────────────────
+const XTERM_THEME = {
+  background: "#0a0a0a",
+  foreground: "#e5e5e5",
+  cursor: "#e5e5e5",
+  selectionBackground: "rgba(255,255,255,0.18)",
+  black: "#1a1a1a",
+  red: "#ff6b6b",
+  green: "#69db7c",
+  yellow: "#ffd43b",
+  blue: "#74c0fc",
+  magenta: "#da77f2",
+  cyan: "#66d9e8",
+  white: "#e5e5e5",
+  brightBlack: "#555",
+  brightRed: "#ff8787",
+  brightGreen: "#8ce99a",
+  brightYellow: "#ffe066",
+  brightBlue: "#a5d8ff",
+  brightMagenta: "#e599f7",
+  brightCyan: "#99e9f2",
+  brightWhite: "#ffffff",
+};
+
+function useXterm(containerRef, cwd, key) {
+  const termRef = useR(null);
+  const wsRef = useR(null);
+  const fitRef = useR(null);
+
+  useE(() => {
+    if (!containerRef.current) return;
+
+    const term = new window.Terminal({
+      fontFamily: "'Hack Nerd Font Mono', 'Geist Mono', 'Cascadia Code', Menlo, monospace",
+      fontSize: 13,
+      lineHeight: 1.3,
+      cursorBlink: true,
+      cursorStyle: "bar",
+      theme: XTERM_THEME,
+      allowProposedApi: true,
+    });
+
+    const fit = new window.FitAddon.FitAddon();
+    term.loadAddon(fit);
+    fitRef.current = fit;
+
+    const links = new window.WebLinksAddon.WebLinksAddon();
+    term.loadAddon(links);
+
+    term.open(containerRef.current);
+    fit.fit();
+    termRef.current = term;
+
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${proto}//${location.host}/ws/terminal?cwd=${encodeURIComponent(cwd)}&cols=${term.cols}&rows=${term.rows}`;
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+
+    ws.onopen = () => { term.focus(); };
+    ws.onmessage = (ev) => { term.write(ev.data); };
+    ws.onclose = () => { term.write("\r\n\x1b[90m[Connection closed]\x1b[0m\r\n"); };
+    ws.onerror = () => { term.write("\r\n\x1b[31m[WebSocket error]\x1b[0m\r\n"); };
+
+    term.onData((data) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(data);
+    });
+
+    term.onResize(({ cols, rows }) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "resize", cols, rows }));
+    });
+
+    const ro = new ResizeObserver(() => {
+      try { fit.fit(); } catch {}
+    });
+    ro.observe(containerRef.current);
+
+    return () => {
+      ro.disconnect();
+      ws.close();
+      term.dispose();
+      termRef.current = null;
+      wsRef.current = null;
+      fitRef.current = null;
+    };
+  }, [key]);
+
+  return { termRef, wsRef, fitRef };
+}
+
+// ─── Terminal tab (xterm.js + WebSocket) ────────────────────────────────────
+function TerminalTab({ s }) {
+  const containerRef = useR(null);
+  useXterm(containerRef, s.cwd || "~", s.id);
+
+  return (
+    <div className="terminal-tab">
+      <div ref={containerRef} className="terminal-container" />
+    </div>
+  );
+}
+
+// ─── Global terminal panel (session-independent) ────────────────────────────
+function GlobalTerminalPanel({ open, onClose }) {
+  const containerRef = useR(null);
+  const [connected, setConnected] = useS(false);
+
+  // Only mount xterm when open
+  useE(() => {
+    if (!open || !containerRef.current) return;
+
+    const term = new window.Terminal({
+      fontFamily: "'Hack Nerd Font Mono', 'Geist Mono', 'Cascadia Code', Menlo, monospace",
+      fontSize: 13,
+      lineHeight: 1.3,
+      cursorBlink: true,
+      cursorStyle: "bar",
+      theme: XTERM_THEME,
+      allowProposedApi: true,
+    });
+
+    const fit = new window.FitAddon.FitAddon();
+    term.loadAddon(fit);
+
+    const links = new window.WebLinksAddon.WebLinksAddon();
+    term.loadAddon(links);
+
+    term.open(containerRef.current);
+    fit.fit();
+
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${proto}//${location.host}/ws/terminal?cwd=${encodeURIComponent("~")}&cols=${term.cols}&rows=${term.rows}`;
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => { setConnected(true); term.focus(); };
+    ws.onmessage = (ev) => { term.write(ev.data); };
+    ws.onclose = () => { setConnected(false); term.write("\r\n\x1b[90m[Connection closed]\x1b[0m\r\n"); };
+    ws.onerror = () => { term.write("\r\n\x1b[31m[WebSocket error]\x1b[0m\r\n"); };
+
+    term.onData((data) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(data);
+    });
+
+    term.onResize(({ cols, rows }) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "resize", cols, rows }));
+    });
+
+    const ro = new ResizeObserver(() => {
+      try { fit.fit(); } catch {}
+    });
+    ro.observe(containerRef.current);
+
+    return () => {
+      ro.disconnect();
+      ws.close();
+      term.dispose();
+      setConnected(false);
+    };
+  }, [open]);
+
+  if (!open) return null;
+
+  return (
+    <div className="global-terminal">
+      <div className="global-terminal-hdr">
+        <Ico.terminal />
+        <span className="global-terminal-title">Terminal</span>
+        <span className={"global-terminal-status" + (connected ? " connected" : "")}>
+          <span className="dot" data-status={connected ? "working" : "stopped"} style={{ width: 6, height: 6 }} />
+          {connected ? "connected" : "disconnected"}
+        </span>
+        <div style={{ flex: 1 }} />
+        <button className="btn btn-ghost btn-icon" onClick={onClose} aria-label="Close terminal">
+          <Ico.x />
+        </button>
+      </div>
+      <div ref={containerRef} className="global-terminal-body" />
+    </div>
+  );
+}
+
 // ─── Dropdown menu ──────────────────────────────────────────────────────────
 function DropdownMenu({ open, onClose, items }) {
   const ref = useR(null);
@@ -298,15 +478,17 @@ function Drawer({ session, onClose, onAction, toast }) {
   useE(() => {
     const fn = (e) => {
       if (e.key === "Escape" && session) {
+        // Don't intercept Escape when terminal tab is active (xterm handles it)
+        if (tab === "terminal") return;
         if (menuOpen) setMenuOpen(false);
         else onClose();
       }
     };
     window.addEventListener("keydown", fn);
     return () => window.removeEventListener("keydown", fn);
-  }, [session, onClose, menuOpen]);
+  }, [session, onClose, menuOpen, tab]);
 
-  if (!session) return <div className="drawer" data-open="false" />;
+  if (!session) return null;
   const s = session;
 
   const canStop = s.status === "working" || s.status === "idle" || s.status === "queued";
@@ -325,17 +507,17 @@ function Drawer({ session, onClose, onAction, toast }) {
   ];
 
   return (
-    <div className="drawer" data-open="true">
+    <div className="panel">
       {s.status === "working" && <div className="loader" />}
 
-      <div className="drawer-hdr">
+      <div className="panel-hdr">
         <span className="dot" data-status={s.status} />
         <span className="name">{s.name}</span>
         <span className="id">{s.id}</span>
         <button className="btn btn-ghost btn-icon x" onClick={onClose} aria-label="Close"><Ico.x /></button>
       </div>
 
-      <div className="drawer-actions">
+      <div className="panel-actions">
         {canStop && <button className="btn btn-danger" onClick={() => onAction("stop", s)}><Ico.stop /> Stop</button>}
         {canRespawn && <button className="btn" onClick={() => onAction("respawn", s)}><Ico.refresh /> Respawn</button>}
         <a className="btn" href={s.rc || "https://claude.ai/code"} target="_blank" rel="noopener"><Ico.link /> Remote Control <Ico.ext /></a>
@@ -347,7 +529,7 @@ function Drawer({ session, onClose, onAction, toast }) {
         </div>
       </div>
 
-      <div className="drawer-tabs">
+      <div className="panel-tabs">
         <button data-active={tab === "detail"} onClick={() => setTab("detail")}>Detail</button>
         <button data-active={tab === "logs"} onClick={() => setTab("logs")}>
           Logs <span className="badge">live</span>
@@ -355,12 +537,16 @@ function Drawer({ session, onClose, onAction, toast }) {
         <button data-active={tab === "transcript"} onClick={() => setTab("transcript")}>
           Transcript <span className="badge">{s.turns}</span>
         </button>
+        <button data-active={tab === "terminal"} onClick={() => setTab("terminal")}>
+          Terminal
+        </button>
       </div>
 
-      <div className="drawer-body">
+      <div className={tab === "terminal" ? "panel-body panel-body-terminal" : "panel-body"}>
         {tab === "detail" && <DetailTab s={s} />}
         {tab === "logs" && <LogsTab s={s} paused={paused} onTogglePause={() => setPaused((p) => !p)} />}
         {tab === "transcript" && <TranscriptTab s={s} />}
+        {tab === "terminal" && <TerminalTab s={s} />}
       </div>
     </div>
   );
@@ -568,3 +754,4 @@ function NewSessionModal({ open, onClose, onCreate }) {
 
 window.Drawer = Drawer;
 window.NewSessionModal = NewSessionModal;
+window.GlobalTerminalPanel = GlobalTerminalPanel;

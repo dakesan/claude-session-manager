@@ -50,6 +50,7 @@ function App() {
   const [project, setProject] = uS("all");
   const [view, setView] = uS(t.view);
   const [modalOpen, setModalOpen] = uS(false);
+  const [terminalOpen, setTerminalOpen] = uS(false);
   const [toast, setToast] = uS(null);
 
   uE(() => setView(t.view), [t.view]);
@@ -166,6 +167,8 @@ function App() {
         e.preventDefault(); setModalOpen(true);
       } else if ((e.metaKey || e.ctrlKey) && e.key === ".") {
         e.preventDefault(); setTheme((th) => th === "dark" ? "light" : "dark");
+      } else if ((e.metaKey || e.ctrlKey) && e.key === "`") {
+        e.preventDefault(); setTerminalOpen((v) => !v);
       }
     };
     window.addEventListener("keydown", fn);
@@ -181,6 +184,8 @@ function App() {
         onQuery={setQuery}
         onNew={() => setModalOpen(true)}
         onOpenPalette={() => setModalOpen(true)}
+        terminalOpen={terminalOpen}
+        onToggleTerminal={() => setTerminalOpen((v) => !v)}
       />
 
       <Pieces.Sidebar
@@ -216,21 +221,33 @@ function App() {
           </div>
         </div>
 
-        {view === "list"
-          ? <Pieces.SessionTable sessions={filtered} selectedId={selectedId} onSelect={setSelectedId} onAction={handleAction} />
-          : <Pieces.SessionCards sessions={filtered} selectedId={selectedId} onSelect={setSelectedId} />}
+        <div className="split-view">
+          <div className="split-list">
+            {view === "list"
+              ? <Pieces.SessionTable sessions={filtered} selectedId={selectedId} onSelect={setSelectedId} onAction={handleAction} />
+              : <Pieces.SessionCards sessions={filtered} selectedId={selectedId} onSelect={setSelectedId} />}
+          </div>
+          {selected && (
+            <div className="split-panel">
+              <Drawer
+                session={selected}
+                onClose={() => setSelectedId(null)}
+                onAction={handleAction}
+              />
+            </div>
+          )}
+        </div>
       </main>
-
-      <Drawer
-        session={selected}
-        onClose={() => setSelectedId(null)}
-        onAction={handleAction}
-      />
 
       <NewSessionModal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         onCreate={handleCreate}
+      />
+
+      <GlobalTerminalPanel
+        open={terminalOpen}
+        onClose={() => setTerminalOpen(false)}
       />
 
       <div className="toast" data-show={!!toast}>

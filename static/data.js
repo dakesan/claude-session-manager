@@ -9,6 +9,7 @@ window.PROJECTS = [];
 window.REMOTE_CONTROLS = [];
 window.STATUS_ORDER = ["working", "queued", "needs_input", "idle", "completed", "stopped", "failed"];
 window.SEED_SESSIONS = [];
+window.CSM_HOSTNAME = "";
 
 // ─── Log templates (fallback for synthetic streamer) ─────────────────────────
 window.LOG_TEMPLATES = {
@@ -127,6 +128,17 @@ window.CSM_API = {
   const sessions = await fetchSessions();
   window.SEED_SESSIONS = sessions;
   window.PROJECTS = deriveProjects(sessions);
+
+  // Get health info (hostname)
+  try {
+    const res = await fetch(`${API}/health`);
+    if (res.ok) {
+      const health = await res.json();
+      if (health.hostname) window.CSM_HOSTNAME = health.hostname;
+    }
+  } catch {
+    // ignore
+  }
 
   // Get roster (process info)
   try {

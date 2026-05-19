@@ -43,8 +43,9 @@ function StatusCell({ status, blurb }) {
 }
 
 // ─── Header ──────────────────────────────────────────────────────────────────
-function Header({ theme, onToggleTheme, query, onQuery, onNew, onOpenPalette }) {
+function Header({ theme, onToggleTheme, query, onQuery, onNew, onOpenPalette, terminalOpen, onToggleTerminal }) {
   const inputRef = useRef(null);
+  const [host, setHost] = useState(window.CSM_HOSTNAME || "");
   useEffect(() => {
     const fn = (e) => {
       if (e.key === "/" && document.activeElement?.tagName !== "INPUT" && document.activeElement?.tagName !== "TEXTAREA") {
@@ -54,12 +55,19 @@ function Header({ theme, onToggleTheme, query, onQuery, onNew, onOpenPalette }) 
     window.addEventListener("keydown", fn);
     return () => window.removeEventListener("keydown", fn);
   }, []);
+  useEffect(() => {
+    if (!host && window.CSM_HOSTNAME) setHost(window.CSM_HOSTNAME);
+    const i = setInterval(() => {
+      if (window.CSM_HOSTNAME && window.CSM_HOSTNAME !== host) setHost(window.CSM_HOSTNAME);
+    }, 1000);
+    return () => clearInterval(i);
+  }, [host]);
 
   return (
     <header className="hdr">
       <div className="hdr-brand">
-        <div className="hdr-brand-mark" aria-hidden="true">CS</div>
-        <div className="hdr-brand-title">Session Manager<span className="muted">v0.5</span></div>
+        <img className="hdr-brand-icon" src="icon.png" alt="CSM" width="32" height="32" />
+        <div className="hdr-brand-title">{host || "Session Manager"}<span className="muted">v0.5</span></div>
       </div>
 
       <div className="hdr-search">
@@ -76,6 +84,9 @@ function Header({ theme, onToggleTheme, query, onQuery, onNew, onOpenPalette }) 
       <div className="hdr-spacer" />
 
       <div className="hdr-actions">
+        <button className={"btn btn-ghost btn-icon" + (terminalOpen ? " btn-active" : "")} onClick={onToggleTerminal} title="Toggle terminal (⌘`)" aria-label="Toggle terminal">
+          <Ico.terminal />
+        </button>
         <button className="btn btn-ghost btn-icon theme-tog" onClick={onToggleTheme} title={theme === "dark" ? "Light theme" : "Dark theme"} aria-label="Toggle theme">
           {theme === "dark" ? <Ico.sun /> : <Ico.moon />}
         </button>
