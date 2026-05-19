@@ -399,8 +399,8 @@ export async function createSession(
       .join(" "),
   );
 
-  // Wait a moment for the claude process to initialize
-  await new Promise((resolve) => setTimeout(resolve, 2000));
+  // Wait for the claude TUI to be ready (poll for the input prompt)
+  await waitForTuiReady(tmuxSession, 15);
 
   // Extract PID of the claude process running inside the tmux pane
   let pid: number | undefined;
@@ -426,9 +426,7 @@ export async function createSession(
     // PID extraction failed — non-fatal, we can still track by tmux session name
   }
 
-  // Send the initial prompt after claude has started
-  // Use a short delay to let the TUI initialize
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+  // Send the initial prompt after claude TUI is ready
   try {
     // Escape the prompt for tmux send-keys
     const escapedPrompt = prompt.replace(/\\/g, "\\\\").replace(/'/g, "'\\''");
@@ -538,6 +536,39 @@ async function getTmuxSessionName(session: Session): Promise<string | null> {
 }
 
 /**
+ * Wait for Claude TUI to be ready by polling tmux pane content.
+ * Looks for the `>` input prompt or "What can I help" text.
+ */
+async function waitForTuiReady(
+  tmuxSession: string,
+  maxWaitSec: number,
+): Promise<boolean> {
+  const interval = 1000;
+  const maxAttempts = Math.ceil((maxWaitSec * 1000) / interval);
+
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const { stdout } = await execAsync(
+        `${TMUX_BIN} capture-pane -t '${tmuxSession}' -p -S -10`,
+      );
+      // Claude TUI shows ">" prompt when ready for input, or the
+      // text "What can I help you with?" or similar greeting
+      if (
+        stdout.includes(">") ||
+        stdout.includes("What can I help") ||
+        stdout.includes("claude.ai/code")
+      ) {
+        return true;
+      }
+    } catch {
+      // tmux capture failed
+    }
+    await new Promise((resolve) => setTimeout(resolve, interval));
+  }
+  return false;
+}
+
+/**
  * Capture the Remote Control URL from tmux pane output.
  * Claude prints the RC URL when it starts with --remote-control.
  * We poll the pane content for up to `maxWaitSec` seconds looking for it.
@@ -598,6 +629,10 @@ export async function refreshRcUrl(id: string): Promise<string | undefined> {
   return undefined;
 }
 
+/**
+ * Respawn a stopped session by resuming the existing session ID.
+ * Uses `claude --resume <sessionId>` to restore conversation history.
+ */
 export async function respawnSession(id: string): Promise<boolean> {
   const session = await getSession(id);
   if (!session) return false;
@@ -605,19 +640,86 @@ export async function respawnSession(id: string): Promise<boolean> {
   // Can only respawn stopped sessions
   if (session.state === "working") return false;
 
+  const sid = session.shortId;
+  const workDir = session.cwd || process.cwd();
+  const tmuxSession = `csm-${sid}`;
+  const rcName = session.name || `csm-${sid}`;
+
+  // Build the claude command with --resume to restore the session
+  const claudeCmd = [
+    CLAUDE_BIN,
+    "--resume",
+    session.sessionId,
+    "--remote-control",
+    rcName,
+    "--dangerously-skip-permissions",
+  ]
+    .map((a) => `'${a.replace(/'/g, "'\\''")}'`)
+    .join(" ");
+
   try {
-    const newSession = await createSession(
-      session.prompt || "Continue previous work",
-      session.name,
-      session.cwd,
+    // Launch tmux detached session with --resume
+    await execAsync(
+      [
+        TMUX_BIN,
+        "new-session",
+        "-d",
+        "-s",
+        tmuxSession,
+        "-c",
+        workDir,
+        "--",
+        "bash",
+        "-c",
+        `${claudeCmd}; echo '[CSM] claude exited'; sleep 10`,
+      ]
+        .map((a) => `'${a.replace(/'/g, "'\\''")}'`)
+        .join(" "),
     );
-    // Update the CSM file to point to the new PID
+
+    // Wait for TUI to be ready
+    await waitForTuiReady(tmuxSession, 15);
+
+    // Extract PID
+    let pid: number | undefined;
+    try {
+      const { stdout } = await execAsync(
+        `${TMUX_BIN} list-panes -t '${tmuxSession}' -F '#{pane_pid}'`,
+      );
+      const shellPid = parseInt(stdout.trim(), 10);
+      if (shellPid) {
+        const { stdout: children } = await execAsync(
+          `ps --ppid ${shellPid} -o pid= 2>/dev/null || true`,
+        );
+        const childPids = children
+          .trim()
+          .split("\n")
+          .map((l) => parseInt(l.trim(), 10))
+          .filter(Boolean);
+        pid = childPids[0] || shellPid;
+      }
+    } catch {
+      // non-fatal
+    }
+
+    // Capture RC URL
+    let rcUrl: string | undefined;
+    try {
+      rcUrl = await captureRcUrl(tmuxSession, 10);
+    } catch {
+      // non-fatal
+    }
+
+    // Update the CSM metadata file
     const csmFile = join(getCsmDir(), `${session.sessionId}.json`);
     if (existsSync(csmFile)) {
       const raw = JSON.parse(await readFile(csmFile, "utf-8"));
-      raw.pid = newSession.pid;
+      raw.pid = pid || raw.pid;
+      raw.tmuxSession = tmuxSession;
+      raw.rcUrl = rcUrl || raw.rcUrl;
       await writeFile(csmFile, JSON.stringify(raw, null, 2));
     }
+
     return true;
   } catch {
     return false;
