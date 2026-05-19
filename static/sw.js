@@ -1,8 +1,8 @@
 // Service Worker for CSM PWA
 // Network-first strategy: always try fresh data, fall back to cache
 
-const CACHE_NAME = "csm-v1";
-const PRECACHE = ["/", "/styles.css", "/icons.jsx", "/pieces.jsx", "/drawer.jsx", "/app.jsx", "/data.js", "/tweaks-panel.jsx", "/icon.png", "/favicon.png"];
+const CACHE_NAME = "csm-v2";
+const PRECACHE = ["/", "/styles.css", "/icons.jsx", "/pieces.jsx", "/drawer.jsx", "/app.jsx", "/data.js", "/tweaks-panel.jsx", "/icon.png", "/icon-192.png", "/icon-512.png", "/favicon.png"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE_NAME).then((c) => c.addAll(PRECACHE)));

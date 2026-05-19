@@ -24,28 +24,22 @@ import { homedir, hostname } from "node:os";
 import { join, basename } from "node:path";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
+import { CONFIG } from "./config.js";
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 
-// ─── Binary paths (mise-managed) ────────────────────────────────────────────
+// ─── Binary paths (from config) ─────────────────────────────────────────────
 
-const TMUX_BIN = join(
-  homedir(),
-  ".local/share/mise/installs/tmux/3.6a/tmux",
-);
-const CLAUDE_BIN = join(
-  homedir(),
-  ".local/share/mise/installs/claude/2.1.143/claude",
-);
+const TMUX_BIN = CONFIG.paths.tmux;
+const CLAUDE_BIN = CONFIG.paths.claude;
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export type SessionState =
   | "working"
-  | "idle"
-  | "stopped"
-  | "unknown";
+  | "waiting"
+  | "stopped";
 
 export interface Session {
   /** Session UUID */
@@ -81,7 +75,7 @@ export interface Session {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function getClaudeDir(): string {
-  return process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
+  return CONFIG.paths.claudeConfigDir;
 }
 
 /** Get the CSM-managed sessions directory */
@@ -154,6 +148,61 @@ async function detectTransitions(sessions: Session[]): Promise<void> {
     }
     _prevStates.set(s.sessionId, s.state);
   }
+}
+
+// ─── JSONL tail reading for waiting detection ───────────────────────────────
+
+/**
+ * Read the last N bytes of a JSONL transcript and determine the type of the
+ * last meaningful message (user or assistant).  Returns "assistant" if Claude
+ * has finished responding and is waiting for user input, "user" if the user
+ * has sent a message and Claude is processing, or null if undetermined.
+ */
+async function getLastMessageRole(
+  sessionId: string,
+): Promise<"user" | "assistant" | null> {
+  const projectsDir = join(getClaudeDir(), "projects");
+  let slugs: string[];
+  try {
+    slugs = await readdir(projectsDir);
+  } catch {
+    return null;
+  }
+
+  for (const slug of slugs) {
+    const jsonlPath = join(projectsDir, slug, `${sessionId}.jsonl`);
+    try {
+      // Read last 8KB — enough to find the last few messages
+      const { open: fsOpen } = await import("node:fs/promises");
+      const fh = await fsOpen(jsonlPath, "r");
+      const stat = await fh.stat();
+      const readSize = Math.min(8192, stat.size);
+      const buf = Buffer.alloc(readSize);
+      await fh.read(buf, 0, readSize, stat.size - readSize);
+      await fh.close();
+
+      const tail = buf.toString("utf-8");
+      const lines = tail.split("\n").filter(Boolean);
+
+      // Walk backwards to find the last user or assistant message
+      for (let i = lines.length - 1; i >= 0; i--) {
+        try {
+          const obj = JSON.parse(lines[i]);
+          if (obj.type === "assistant" || obj.message?.role === "assistant") {
+            return "assistant";
+          }
+          if (obj.type === "user" || obj.message?.role === "user") {
+            return "user";
+          }
+        } catch {
+          // Possibly a partial line at the start of the buffer — skip
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }
 
 // ─── Session discovery ───────────────────────────────────────────────────────
@@ -352,6 +401,19 @@ export async function listSessions(): Promise<Session[]> {
   // Enrich with titles from JSONL transcripts
   await enrichWithTitles(sessions);
 
+  // Refine state: distinguish "working" (Claude processing) from "waiting" (user input needed)
+  await Promise.all(
+    sessions
+      .filter((s) => s.state === "working")
+      .map(async (s) => {
+        const lastRole = await getLastMessageRole(s.sessionId);
+        if (lastRole === "assistant") {
+          s.state = "waiting";
+        }
+        // lastRole === "user" or null → keep "working"
+      }),
+  );
+
   // Sort: working first, then by createdAt desc
   sessions.sort((a, b) => {
     if (a.state === "working" && b.state !== "working") return -1;
@@ -425,14 +487,17 @@ export async function createSession(
   const rcName = name || `csm-${sid}`;
 
   // Build the claude command to run inside tmux
-  const claudeCmd = [
+  const claudeArgs = [
     CLAUDE_BIN,
     "--session-id",
     sessionId,
     "--remote-control",
     rcName,
-    "--dangerously-skip-permissions",
-  ]
+  ];
+  if (CONFIG.session.dangerouslySkipPermissions) {
+    claudeArgs.push("--dangerously-skip-permissions");
+  }
+  const claudeCmd = claudeArgs
     .map((a) => `'${a.replace(/'/g, "'\\''")}'`)
     .join(" ");
 
@@ -747,14 +812,17 @@ export async function respawnSession(id: string): Promise<boolean> {
   }
 
   // Build the claude command with --resume to restore the exact session
-  const claudeCmd = [
+  const resumeArgs = [
     CLAUDE_BIN,
     "--resume",
     session.sessionId,
     "--remote-control",
     rcName,
-    "--dangerously-skip-permissions",
-  ]
+  ];
+  if (CONFIG.session.dangerouslySkipPermissions) {
+    resumeArgs.push("--dangerously-skip-permissions");
+  }
+  const claudeCmd = resumeArgs
     .map((a) => `'${a.replace(/'/g, "'\\''")}'`)
     .join(" ");
 

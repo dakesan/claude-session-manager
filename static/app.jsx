@@ -58,7 +58,7 @@ function App() {
   uE(() => {
     const i = setInterval(() => {
       setSessions((prev) => prev.map((s) =>
-        s.status === "working" ? { ...s, duration: s.duration + 1 } : s
+        s.status === "working" || s.status === "waiting" ? { ...s, duration: s.duration + 1 } : s
       ));
     }, 1000);
     return () => clearInterval(i);

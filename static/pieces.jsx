@@ -24,11 +24,8 @@ function fmtTokens(n) {
 }
 function statusBlurb(s) {
   if (s.status === "working") return s.currentTool ? `Using ${s.currentTool}` : "Working";
-  if (s.status === "idle") return s.awaitingInput ? "Awaiting input" : "Idle";
-  if (s.status === "done") return "Done";
+  if (s.status === "waiting") return "Waiting for input";
   if (s.status === "stopped") return s.stoppedReason ? `Stopped · ${s.stoppedReason}` : "Stopped";
-  if (s.status === "error") return "Error";
-  if (s.status === "queued") return `Queued · #${s.queuePos ?? "?"}`;
   return s.status;
 }
 
@@ -66,10 +63,8 @@ function Header({ theme, onToggleTheme, query, onQuery, onNew, onOpenPalette, te
   const filters = [
     { id: "all",     label: "All" },
     { id: "working", label: "Working" },
-    { id: "idle",    label: "Idle" },
+    { id: "waiting", label: "Waiting" },
     { id: "stopped", label: "Stopped" },
-    { id: "done",    label: "Done" },
-    { id: "error",   label: "Error" },
   ];
 
   return (
@@ -193,7 +188,7 @@ function ProjectGroupedList({ sessions, selectedId, onSelect, onAction }) {
                   <span className="pgl-item-id">{s.id}</span>
                 </div>
                 <span className="pgl-item-actions">
-                  {s.status === "working" || s.status === "idle" ? (
+                  {s.status === "working" || s.status === "waiting" ? (
                     <button title="Stop" onClick={(e) => { e.stopPropagation(); onAction("stop", s); }}><Ico.stop /></button>
                   ) : (
                     <button title="Respawn" onClick={(e) => { e.stopPropagation(); onAction("respawn", s); }}><Ico.refresh /></button>

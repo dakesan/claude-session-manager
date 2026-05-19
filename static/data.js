@@ -7,7 +7,7 @@ const API = "/api";
 
 window.PROJECTS = [];
 window.REMOTE_CONTROLS = [];
-window.STATUS_ORDER = ["working", "queued", "needs_input", "idle", "completed", "stopped", "failed"];
+window.STATUS_ORDER = ["working", "waiting", "stopped"];
 window.SEED_SESSIONS = [];
 window.CSM_HOSTNAME = "";
 
@@ -23,18 +23,31 @@ window.LOG_TEMPLATES = {
 };
 
 // ─── Map backend session → frontend session shape ────────────────────────────
+/** Extract the last directory name from a project slug like "-home-oodake-Hiro" */
+function projectDisplayName(slug) {
+  if (!slug) return "default";
+  // Slug is an absolute path with slashes replaced by hyphens and a leading hyphen
+  // e.g. "-home-oodake-ghq-github-com-dakesan-claude-session-manager"
+  // Use cwd if available (more reliable), otherwise fall back to slug's last segment
+  const parts = slug.replace(/^-/, "").split("-");
+  return parts[parts.length - 1] || slug;
+}
+
 function mapSession(s) {
   // Backend returns: sessionId, shortId, name, state, prompt, cwd,
   //                  createdAt, pid, projectSlug, gitBranch, model, version
   const startedAt = s.createdAt ? new Date(s.createdAt).getTime() : Date.now();
   const duration = Math.floor((Date.now() - startedAt) / 1000);
 
+  // Prefer cwd's basename for project name; fall back to slug parsing
+  const projectName = s.cwd ? s.cwd.split("/").filter(Boolean).pop() : projectDisplayName(s.projectSlug);
+
   return {
     id: s.shortId,
     name: s.name || s.shortId,
     prompt: s.prompt || "(no prompt)",
     status: s.state || "stopped",
-    project: s.projectSlug || "default",
+    project: projectName || "default",
     startedAt,
     duration,
     turns: 0,

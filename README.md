@@ -4,17 +4,74 @@ Web dashboard + REST API + MCP server for managing Claude Code interactive sessi
 
 Sessions run as **interactive** Claude processes (not `-p` programmatic mode), using regular Claude Max credits. Each session launches inside a tmux pane with `--remote-control` enabled, making it accessible from claude.ai/code or the Claude mobile app.
 
-## Quick Start
+## Requirements
+
+- **Node.js 18+** (22+ recommended)
+- **C/C++ compiler** — required for building `node-pty` (native addon)
+  - Ubuntu/Debian: `sudo apt install build-essential`
+  - macOS: Xcode Command Line Tools (`xcode-select --install`)
+- **tmux** — sessions run inside tmux panes
+- **Claude Code CLI v2.1.51+** — with `--remote-control` flag support
+- **Claude Max subscription** — for Remote Control
+- Recommended: **Tailscale** for secure remote access
+
+## Installation
 
 ```bash
 git clone https://github.com/dakesan/claude-session-manager.git
 cd claude-session-manager
-npm install
-npm run build
+npm install        # builds node-pty native addon
+npm run build      # compiles TypeScript → dist/
+```
+
+## Usage
+
+### Start the server
+
+```bash
 node dist/cli.js
+# or
+npm start
 ```
 
 Server starts at `http://0.0.0.0:8321`. Access the web dashboard or use the API directly.
+
+Override host/port with environment variables:
+
+```bash
+HOST=127.0.0.1 PORT=9000 node dist/cli.js
+```
+
+### Run as a systemd service (Linux)
+
+Register CSM as a systemd **user** service that starts on login and restarts on failure:
+
+```bash
+node dist/cli.js install-service
+```
+
+This auto-detects the project directory and Node.js binary path, writes the service file to `~/.config/systemd/user/csm.service`, and enables + starts it immediately.
+
+Manage the service:
+
+```bash
+systemctl --user status csm       # check status
+systemctl --user stop csm         # stop
+systemctl --user restart csm      # restart
+journalctl --user -u csm -f       # follow logs
+```
+
+To keep the service running after SSH logout:
+
+```bash
+loginctl enable-linger $USER
+```
+
+Uninstall:
+
+```bash
+node dist/cli.js uninstall-service
+```
 
 ## API Reference
 
@@ -194,14 +251,6 @@ Session lifecycle:
 3. RC URL captured from tmux pane output
 4. Stop = `tmux kill-session`
 5. State detection = PID liveness check + tmux has-session
-
-## Requirements
-
-- Node.js 18+
-- Claude Code CLI v2.1.51+ (for `--remote-control` flag)
-- tmux (managed via mise: `mise install tmux`)
-- Claude Max subscription (for Remote Control)
-- Recommended: Tailscale for secure remote access
 
 ## Configuration
 

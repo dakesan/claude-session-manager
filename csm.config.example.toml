@@ -1,0 +1,21 @@
+# Claude Session Manager configuration
+# Copy this file to csm.config.toml and edit as needed.
+# csm.config.toml is gitignored — your local settings stay private.
+
+[server]
+host = "0.0.0.0"
+port = 8321
+
+[paths]
+# Path to tmux binary (auto-detected from $PATH if omitted)
+# tmux = "/usr/bin/tmux"
+
+# Path to claude binary (auto-detected from $PATH if omitted)
+# claude = "/usr/local/bin/claude"
+
+# Claude config directory (defaults to ~/.claude)
+# claude_config_dir = "~/.claude"
+
+[session]
+# Flags passed to every `claude` invocation
+dangerously_skip_permissions = true

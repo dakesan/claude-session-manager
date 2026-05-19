@@ -19,7 +19,7 @@ function useStreamingLogs(session, paused) {
     const tmpl = window.LOG_TEMPLATES.default;
     // pre-seed: backfill ~half the template so the box never feels empty
     const seedCount = session.status === "working" ? Math.min(14, tmpl.length) :
-                      session.status === "queued"  ? 0 :
+                      session.status === "waiting" ? Math.min(14, tmpl.length) :
                       tmpl.length;
     const seeded = [];
     let t = Date.now() - 60000;
@@ -175,8 +175,8 @@ function useRealLogs(session) {
     };
 
     fetchLogs();
-    // Re-fetch every 5 seconds for working sessions
-    if (session.status === "working") {
+    // Re-fetch every 5 seconds for active sessions
+    if (session.status === "working" || session.status === "waiting") {
       const i = setInterval(fetchLogs, 5000);
       return () => clearInterval(i);
     }
@@ -195,8 +195,8 @@ function LogsTab({ s, paused, onTogglePause }) {
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-        <span className="pill"><span className="dot" data-status={s.status === "working" ? "working" : "stopped"} style={{ width: 6, height: 6 }} />
-          {loading ? "loading" : s.status === "working" ? "live" : "static"}
+        <span className="pill"><span className="dot" data-status={s.status === "stopped" ? "stopped" : "working"} style={{ width: 6, height: 6 }} />
+          {loading ? "loading" : s.status === "stopped" ? "static" : "live"}
         </span>
         <span style={{ fontSize: 11, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>{lines.length} lines</span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
@@ -491,8 +491,8 @@ function Drawer({ session, onClose, onAction, toast }) {
   if (!session) return null;
   const s = session;
 
-  const canStop = s.status === "working" || s.status === "idle" || s.status === "queued";
-  const canRespawn = s.status === "done" || s.status === "stopped" || s.status === "error";
+  const canStop = s.status === "working" || s.status === "waiting";
+  const canRespawn = s.status === "stopped";
 
   const menuItems = [
     { label: "Copy session ID", icon: <Ico.copy />, onClick: () => navigator.clipboard?.writeText(s.sessionId || s.id) },
@@ -508,7 +508,7 @@ function Drawer({ session, onClose, onAction, toast }) {
 
   return (
     <div className="panel">
-      {s.status === "working" && <div className="loader" />}
+      {(s.status === "working") && <div className="loader" />}
 
       <div className="panel-hdr">
         <span className="dot" data-status={s.status} />
