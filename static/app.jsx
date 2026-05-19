@@ -192,7 +192,8 @@ function App() {
               ? <Pieces.ProjectGroupedList sessions={filtered} selectedId={selectedId} onSelect={setSelectedId} onAction={handleAction} />
               : <Pieces.ProjectKanban sessions={filtered} selectedId={selectedId} onSelect={setSelectedId} onAction={handleAction} />}
           </div>
-          {selected && (
+          {selected && (<>
+            <div className="split-panel-scrim" onClick={() => setSelectedId(null)} />
             <div className="split-panel">
               <Drawer
                 session={selected}
@@ -200,7 +201,7 @@ function App() {
                 onAction={handleAction}
               />
             </div>
-          )}
+          </>)}
         </div>
       </main>
 
