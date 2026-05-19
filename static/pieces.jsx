@@ -1,4 +1,4 @@
-// Reusable presentational pieces: StatusDot, Header, Sidebar, Table, Cards, Drawer, NewModal.
+// Reusable presentational pieces: Header, ProjectGroupedList, ProjectKanban, Drawer.
 // All read from props; no global state.
 
 const { useState, useEffect, useRef, useMemo, useCallback } = React;
@@ -43,7 +43,7 @@ function StatusCell({ status, blurb }) {
 }
 
 // ─── Header ──────────────────────────────────────────────────────────────────
-function Header({ theme, onToggleTheme, query, onQuery, onNew, onOpenPalette, terminalOpen, onToggleTerminal }) {
+function Header({ theme, onToggleTheme, query, onQuery, onNew, onOpenPalette, terminalOpen, onToggleTerminal, view, onViewChange, filter, onFilter, counts }) {
   const inputRef = useRef(null);
   const [host, setHost] = useState(window.CSM_HOSTNAME || "");
   useEffect(() => {
@@ -63,6 +63,15 @@ function Header({ theme, onToggleTheme, query, onQuery, onNew, onOpenPalette, te
     return () => clearInterval(i);
   }, [host]);
 
+  const filters = [
+    { id: "all",     label: "All" },
+    { id: "working", label: "Working" },
+    { id: "idle",    label: "Idle" },
+    { id: "stopped", label: "Stopped" },
+    { id: "done",    label: "Done" },
+    { id: "error",   label: "Error" },
+  ];
+
   return (
     <header className="hdr">
       <div className="hdr-brand">
@@ -81,17 +90,36 @@ function Header({ theme, onToggleTheme, query, onQuery, onNew, onOpenPalette, te
         <span className="kbd-hint"><span className="kbd">/</span></span>
       </div>
 
+      <div className="hdr-filters">
+        {filters.map((f) => (
+          <button
+            key={f.id}
+            className={"hdr-filter-btn" + (filter === f.id ? " active" : "")}
+            onClick={() => onFilter(f.id)}
+          >
+            {f.id !== "all" && <span className="dot" data-status={f.id} style={{ width: 6, height: 6 }} />}
+            {f.label}
+            {(counts[f.id] ?? 0) > 0 && <span className="hdr-filter-count">{counts[f.id]}</span>}
+          </button>
+        ))}
+      </div>
+
       <div className="hdr-spacer" />
 
       <div className="hdr-actions">
+        <div className="view-toggle">
+          <button data-active={view === "list"} onClick={() => onViewChange("list")} title="List view">
+            <Ico.list />
+          </button>
+          <button data-active={view === "kanban"} onClick={() => onViewChange("kanban")} title="Kanban view">
+            <Ico.grid />
+          </button>
+        </div>
         <button className={"btn btn-ghost btn-icon" + (terminalOpen ? " btn-active" : "")} onClick={onToggleTerminal} title="Toggle terminal (⌘`)" aria-label="Toggle terminal">
           <Ico.terminal />
         </button>
         <button className="btn btn-ghost btn-icon theme-tog" onClick={onToggleTheme} title={theme === "dark" ? "Light theme" : "Dark theme"} aria-label="Toggle theme">
           {theme === "dark" ? <Ico.sun /> : <Ico.moon />}
-        </button>
-        <button className="btn btn-ghost" onClick={onOpenPalette} title="Command palette">
-          <Ico.dots />
         </button>
         <button className="btn btn-primary" onClick={onNew}>
           <Ico.plus /> New session <span className="kbd" style={{ background: "rgba(0,0,0,.12)", border: 0, color: "inherit", opacity: .6 }}>⌘K</span>
@@ -101,67 +129,21 @@ function Header({ theme, onToggleTheme, query, onQuery, onNew, onOpenPalette, te
   );
 }
 
-// ─── Sidebar ─────────────────────────────────────────────────────────────────
-function Sidebar({ filter, onFilter, counts, project, onProject, projectCounts }) {
-  const filters = [
-    { id: "all",     label: "All sessions" },
-    { id: "working", label: "Working" },
-    { id: "queued",  label: "Queued" },
-    { id: "idle",    label: "Idle" },
-    { id: "done",    label: "Done" },
-    { id: "stopped", label: "Stopped" },
-    { id: "error",   label: "Error" },
-  ];
-
-  return (
-    <aside className="side">
-      <div className="side-section">
-        <div className="side-h">Filter</div>
-        {filters.map((f) => (
-          <div key={f.id} className="side-item" data-active={filter === f.id} onClick={() => onFilter(f.id)}>
-            {f.id !== "all" && <span className="dot" data-status={f.id} />}
-            {f.id === "all" && <span style={{ width: 8 }} />}
-            <span>{f.label}</span>
-            <span className="count">{counts[f.id] ?? 0}</span>
-          </div>
-        ))}
-      </div>
-
-      <div className="side-section">
-        <div className="side-h">Remote control</div>
-        {window.REMOTE_CONTROLS.map((rc) => (
-          <div key={rc.name} className="rc-card">
-            <div className="row">
-              <span className="dot" data-status={rc.connected ? "working" : "stopped"} />
-              <span className="name">{rc.name}</span>
-              <span style={{ marginLeft: "auto", fontFamily: "var(--font-mono)", fontSize: 10.5, color: "var(--text-dim)" }}>{rc.active}/{rc.capacity}</span>
-            </div>
-            <div className="meta">{rc.host}</div>
-            <div className="bar"><span style={{ width: `${(rc.active / rc.capacity) * 100}%` }} /></div>
-          </div>
-        ))}
-      </div>
-
-      <div className="side-section">
-        <div className="side-h">Projects</div>
-        <div className="side-item" data-active={project === "all"} onClick={() => onProject("all")}>
-          <span style={{ width: 8 }} /><span>All projects</span>
-          <span className="count">{projectCounts.all}</span>
-        </div>
-        {window.PROJECTS.map((p) => (
-          <div key={p.id} className="side-item" data-active={project === p.id} onClick={() => onProject(p.id)}>
-            <span className="dot" style={{ background: p.color }} />
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</span>
-            <span className="count">{projectCounts[p.id] ?? 0}</span>
-          </div>
-        ))}
-      </div>
-    </aside>
-  );
+// ─── Helper: group sessions by project ────────────────────────────────────────
+function groupByProject(sessions) {
+  const groups = new Map();
+  for (const s of sessions) {
+    const key = s.project || "Other";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(s);
+  }
+  return groups;
 }
 
-// ─── Table ───────────────────────────────────────────────────────────────────
-function SessionTable({ sessions, selectedId, onSelect, onAction }) {
+// ─── Project Grouped List (Claude-style) ─────────────────────────────────────
+function ProjectGroupedList({ sessions, selectedId, onSelect, onAction }) {
+  const groups = useMemo(() => groupByProject(sessions), [sessions]);
+
   if (sessions.length === 0) {
     return (
       <div className="empty">
@@ -172,35 +154,45 @@ function SessionTable({ sessions, selectedId, onSelect, onAction }) {
       </div>
     );
   }
+
   return (
-    <div className="table-wrap">
-      <table className="table">
-        <thead>
-          <tr>
-            <th style={{ width: 130 }}>Status</th>
-            <th style={{ width: 90 }}>ID</th>
-            <th style={{ width: 220 }}>Name</th>
-            <th>Prompt</th>
-            <th style={{ width: 110 }}>Runtime</th>
-            <th style={{ width: 110 }}>Tokens</th>
-            <th style={{ width: 110 }}>Started</th>
-            <th style={{ width: 90 }} />
-          </tr>
-        </thead>
-        <tbody>
-          {sessions.map((s) => (
-            <tr key={s.id} data-selected={selectedId === s.id} onClick={() => onSelect(s.id)}>
-              <td className="col-status">
-                <StatusCell status={s.status} blurb={statusBlurb(s)} />
-              </td>
-              <td className="col-id">{s.id}</td>
-              <td className="col-name">{s.name}</td>
-              <td className="col-prompt">{s.prompt}</td>
-              <td className="col-runtime">{fmtDuration(s.duration)}</td>
-              <td className="col-tokens">{fmtTokens(s.tokensIn + s.tokensOut)}</td>
-              <td className="col-runtime" style={{ color: "var(--text-muted)" }}>{fmtAgo(s.startedAt)}</td>
-              <td className="col-actions">
-                <span className="row-actions">
+    <div className="pgl">
+      {[...groups.entries()].map(([project, items]) => (
+        <div key={project} className="pgl-group">
+          <div className="pgl-project-hdr">
+            <span className="pgl-project-name">{project}</span>
+            <span className="pgl-project-settings"><Ico.dots /></span>
+          </div>
+          <div className="pgl-items">
+            {items.map((s) => (
+              <div
+                key={s.id}
+                className={"pgl-item" + (selectedId === s.id ? " selected" : "")}
+                onClick={() => onSelect(s.id)}
+              >
+                <span className="dot" data-status={s.status} style={{ width: 7, height: 7, flexShrink: 0 }} />
+                <div className="pgl-item-main">
+                  <div className="pgl-item-row1">
+                    <span className="pgl-item-name">{s.name}</span>
+                    <span className="pgl-item-prompt">{s.prompt}</span>
+                  </div>
+                  <div className="pgl-item-row2">
+                    <span className="pgl-item-status">{statusBlurb(s)}</span>
+                    <span className="pgl-item-sep">·</span>
+                    <span className="pgl-item-detail">{fmtDuration(s.duration)}</span>
+                    <span className="pgl-item-sep">·</span>
+                    <span className="pgl-item-detail">{fmtTokens(s.tokensIn + s.tokensOut)} tok</span>
+                    {s.branch && <>
+                      <span className="pgl-item-sep">·</span>
+                      <span className="pgl-item-detail"><Ico.branch /> {s.branch}</span>
+                    </>}
+                  </div>
+                </div>
+                <div className="pgl-item-right">
+                  <span className="pgl-item-meta">{fmtAgo(s.startedAt)}</span>
+                  <span className="pgl-item-id">{s.id}</span>
+                </div>
+                <span className="pgl-item-actions">
                   {s.status === "working" || s.status === "idle" ? (
                     <button title="Stop" onClick={(e) => { e.stopPropagation(); onAction("stop", s); }}><Ico.stop /></button>
                   ) : (
@@ -208,17 +200,19 @@ function SessionTable({ sessions, selectedId, onSelect, onAction }) {
                   )}
                   <button title="Remove" onClick={(e) => { e.stopPropagation(); onAction("rm", s); }}><Ico.trash /></button>
                 </span>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
 
-// ─── Cards view ──────────────────────────────────────────────────────────────
-function SessionCards({ sessions, selectedId, onSelect }) {
+// ─── Project Kanban ──────────────────────────────────────────────────────────
+function ProjectKanban({ sessions, selectedId, onSelect, onAction }) {
+  const groups = useMemo(() => groupByProject(sessions), [sessions]);
+
   if (sessions.length === 0) {
     return (
       <div className="empty">
@@ -229,23 +223,41 @@ function SessionCards({ sessions, selectedId, onSelect }) {
       </div>
     );
   }
+
   return (
-    <div className="cards">
-      {sessions.map((s) => (
-        <div key={s.id} className="card" data-selected={selectedId === s.id} onClick={() => onSelect(s.id)}>
-          <div className="hdr-row">
-            <span className="dot" data-status={s.status} />
-            <span className="name">{s.name}</span>
-            <span className="id">{s.id}</span>
+    <div className="kanban">
+      {[...groups.entries()].map(([project, items]) => (
+        <div key={project} className="kanban-col">
+          <div className="kanban-col-hdr">
+            <span className="kanban-col-name">{project}</span>
+            <span className="kanban-col-count">{items.length}</span>
           </div>
-          <div className="prompt">{s.prompt}</div>
-          <div className="meta">
-            <span style={{ color: "var(--text-muted)" }}>{statusBlurb(s)}</span>
-            <span>·</span>
-            <span className="dur">{fmtDuration(s.duration)}</span>
-            <span>·</span>
-            <span>{fmtTokens(s.tokensIn + s.tokensOut)} tok</span>
-            <span style={{ marginLeft: "auto" }}>{fmtAgo(s.startedAt)}</span>
+          <div className="kanban-col-body">
+            {items.map((s) => (
+              <div
+                key={s.id}
+                className={"kanban-card" + (selectedId === s.id ? " selected" : "")}
+                onClick={() => onSelect(s.id)}
+              >
+                <div className="kanban-card-hdr">
+                  <span className="dot" data-status={s.status} style={{ width: 7, height: 7 }} />
+                  <span className="kanban-card-name">{s.name}</span>
+                </div>
+                <div className="kanban-card-prompt">{s.prompt}</div>
+                <div className="kanban-card-meta">
+                  <span>{statusBlurb(s)}</span>
+                  <span>·</span>
+                  <span>{fmtDuration(s.duration)}</span>
+                  <span>·</span>
+                  <span>{fmtTokens(s.tokensIn + s.tokensOut)} tok</span>
+                  <span style={{ marginLeft: "auto" }}>{fmtAgo(s.startedAt)}</span>
+                </div>
+                <div className="kanban-card-foot">
+                  {s.branch && <span className="kanban-card-branch"><Ico.branch /> {s.branch}</span>}
+                  <span className="kanban-card-id">{s.id}</span>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       ))}
@@ -253,4 +265,4 @@ function SessionCards({ sessions, selectedId, onSelect }) {
   );
 }
 
-window.Pieces = { Header, Sidebar, SessionTable, SessionCards, StatusCell, fmtDuration, fmtAgo, fmtTokens, statusBlurb };
+window.Pieces = { Header, ProjectGroupedList, ProjectKanban, StatusCell, fmtDuration, fmtAgo, fmtTokens, statusBlurb };

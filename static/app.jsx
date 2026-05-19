@@ -22,7 +22,7 @@ function App() {
   }, [theme]);
 
   const [sessions, setSessions] = uS(window.SEED_SESSIONS || []);
-  const [selectedId, setSelectedId] = uS((window.SEED_SESSIONS || [])[0]?.id || null);
+  const [selectedId, setSelectedId] = uS(null);
   const [query, setQuery] = uS("");
 
   // Poll API for session updates every 3 seconds
@@ -47,7 +47,6 @@ function App() {
     return () => clearInterval(i);
   }, []);
   const [filter, setFilter] = uS("all");
-  const [project, setProject] = uS("all");
   const [view, setView] = uS(t.view);
   const [modalOpen, setModalOpen] = uS(false);
   const [terminalOpen, setTerminalOpen] = uS(false);
@@ -71,16 +70,9 @@ function App() {
     return c;
   }, [sessions]);
 
-  const projectCounts = uM(() => {
-    const c = { all: sessions.length };
-    for (const s of sessions) c[s.project] = (c[s.project] || 0) + 1;
-    return c;
-  }, [sessions]);
-
   const filtered = uM(() => {
     let xs = sessions;
     if (filter !== "all") xs = xs.filter((s) => s.status === filter);
-    if (project !== "all") xs = xs.filter((s) => s.project === project);
     if (query.trim()) {
       const q = query.toLowerCase();
       xs = xs.filter((s) =>
@@ -97,7 +89,7 @@ function App() {
       if (ai !== bi) return ai - bi;
       return b.startedAt - a.startedAt;
     });
-  }, [sessions, filter, project, query]);
+  }, [sessions, filter, query]);
 
   const selected = uM(() => sessions.find((s) => s.id === selectedId) || null, [sessions, selectedId]);
 
@@ -186,46 +178,19 @@ function App() {
         onOpenPalette={() => setModalOpen(true)}
         terminalOpen={terminalOpen}
         onToggleTerminal={() => setTerminalOpen((v) => !v)}
-      />
-
-      <Pieces.Sidebar
-        filter={filter} onFilter={setFilter}
-        project={project} onProject={setProject}
+        view={view}
+        onViewChange={(v) => { setView(v); setTweak("view", v); }}
+        filter={filter}
+        onFilter={setFilter}
         counts={counts}
-        projectCounts={projectCounts}
       />
 
-      <main className="main">
-        <div className="toolbar">
-          <div className="summary">
-            <strong>{filtered.length}</strong> {filtered.length === 1 ? "session" : "sessions"}
-            {counts.working > 0 && <><span className="sep">·</span><span className="mono">{counts.working}</span> working</>}
-            {counts.idle > 0 && <><span className="sep">·</span><span className="mono">{counts.idle}</span> idle</>}
-            {counts.queued > 0 && <><span className="sep">·</span><span className="mono">{counts.queued}</span> queued</>}
-          </div>
-          <div className="toolbar-spacer" />
-          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-dim)" }}>
-            <span className="kbd">/</span> search
-            <span style={{ width: 8 }} />
-            <span className="kbd">⌘</span><span className="kbd">K</span> new
-            <span style={{ width: 8 }} />
-            <span className="kbd">⌘</span><span className="kbd">.</span> theme
-          </div>
-          <div className="view-toggle" style={{ marginLeft: 12 }}>
-            <button data-active={view === "list"} onClick={() => { setView("list"); setTweak("view", "list"); }}>
-              <Ico.list /> List
-            </button>
-            <button data-active={view === "cards"} onClick={() => { setView("cards"); setTweak("view", "cards"); }}>
-              <Ico.grid /> Cards
-            </button>
-          </div>
-        </div>
-
+      <main className="main main-full">
         <div className="split-view">
           <div className="split-list">
             {view === "list"
-              ? <Pieces.SessionTable sessions={filtered} selectedId={selectedId} onSelect={setSelectedId} onAction={handleAction} />
-              : <Pieces.SessionCards sessions={filtered} selectedId={selectedId} onSelect={setSelectedId} />}
+              ? <Pieces.ProjectGroupedList sessions={filtered} selectedId={selectedId} onSelect={setSelectedId} onAction={handleAction} />
+              : <Pieces.ProjectKanban sessions={filtered} selectedId={selectedId} onSelect={setSelectedId} onAction={handleAction} />}
           </div>
           {selected && (
             <div className="split-panel">
@@ -257,7 +222,7 @@ function App() {
 
       <TweaksPanel title="Tweaks">
         <TweakSection label="Display" />
-        <TweakRadio label="View" value={view} options={["list", "cards"]} onChange={(v) => { setView(v); setTweak("view", v); }} />
+        <TweakRadio label="View" value={view} options={["list", "kanban"]} onChange={(v) => { setView(v); setTweak("view", v); }} />
         <TweakSelect label="Theme" value={theme} options={["dark", "light"]} onChange={setTheme} />
         <TweakToggle label="Pulse working sessions" value={t.showStatusPulse} onChange={(v) => setTweak("showStatusPulse", v)} />
         <TweakSection label="Demo" />
@@ -266,9 +231,6 @@ function App() {
           name: "demo-" + Math.random().toString(16).slice(2, 6),
           model: "claude-sonnet-4-5", project: "design-system", rc: "lab-server",
         })} />
-        <TweakButton label="Promote all queued → working" onClick={() => {
-          setSessions((prev) => prev.map((s) => s.status === "queued" ? { ...s, status: "working", duration: 0, startedAt: Date.now() } : s));
-        }} />
       </TweaksPanel>
     </div>
   );
