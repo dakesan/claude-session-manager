@@ -112,6 +112,13 @@ window.CSM_API = {
     return data.logs || "(no output)";
   },
 
+  async browse(path) {
+    const url = path ? `${API}/browse?path=${encodeURIComponent(path)}` : `${API}/browse`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error((await res.json()).error || res.statusText);
+    return res.json();
+  },
+
   fetchSessions,
 };
 

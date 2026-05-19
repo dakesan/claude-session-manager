@@ -164,6 +164,24 @@ export function createMcpServer(): McpServer {
     },
   );
 
+  // --- browse_directory ---
+  server.tool(
+    "browse_directory",
+    "Browse directories on the CSM host. Useful for choosing a working directory when creating a session.",
+    {
+      path: z
+        .string()
+        .optional()
+        .describe("Directory path to browse. Defaults to home directory"),
+    },
+    async ({ path }) => {
+      const qs = path ? `?path=${encodeURIComponent(path)}` : "";
+      const { ok, data } = await csmFetch(`/api/browse${qs}`);
+      if (!ok) return errorResult(`Failed to browse: ${JSON.stringify(data)}`);
+      return jsonResult(data);
+    },
+  );
+
   // --- health ---
   server.tool(
     "health",

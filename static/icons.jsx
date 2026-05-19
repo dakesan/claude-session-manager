@@ -118,5 +118,10 @@ const Ico = {
       <path d="M3 8h10M9 4l4 4-4 4" />
     </svg>
   ),
+  folder: (p) => (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" {...p}>
+      <path d="M2 4.5V12a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1H8.5L7 3H3a1 1 0 0 0-1 1.5Z" />
+    </svg>
+  ),
 };
 window.Ico = Ico;

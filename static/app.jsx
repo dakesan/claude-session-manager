@@ -134,7 +134,7 @@ function App() {
   const handleCreate = uC(async (opts) => {
     try {
       if (window.CSM_API) {
-        const newSession = await window.CSM_API.createSession(opts.prompt, opts.name);
+        const newSession = await window.CSM_API.createSession(opts.prompt, opts.name, opts.cwd);
         setSessions((prev) => [newSession, ...prev]);
         setSelectedId(newSession.id);
         showToast(`Launched ${newSession.name} · ${newSession.id}`);

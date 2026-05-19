@@ -2,8 +2,9 @@
  * Hono HTTP server for Claude Session Manager.
  */
 
-import { readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readFile, readdir, stat } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 import { Hono } from "hono";
@@ -87,6 +88,42 @@ app.get("/api/sessions/:id/rc-url", async (c) => {
 app.get("/api/roster", async (c) => {
   const roster = await cli.getRoster();
   return c.json(roster);
+});
+
+// --- Directory browsing ---
+
+app.get("/api/browse", async (c) => {
+  const raw = c.req.query("path") || homedir();
+  const target = resolve(raw.replace(/^~/, homedir()));
+
+  // Prevent traversal outside home
+  const home = homedir();
+  if (!target.startsWith(home) && target !== "/") {
+    return c.json({ error: "Path must be under home directory" }, 403);
+  }
+
+  try {
+    const info = await stat(target);
+    if (!info.isDirectory()) {
+      return c.json({ error: "Not a directory" }, 400);
+    }
+    const entries = await readdir(target, { withFileTypes: true });
+    const dirs = entries
+      .filter((e) => e.isDirectory() && !e.name.startsWith("."))
+      .map((e) => ({
+        name: e.name,
+        path: join(target, e.name),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    return c.json({
+      current: target,
+      parent: target === home ? null : dirname(target),
+      dirs,
+    });
+  } catch {
+    return c.json({ error: `Cannot read ${target}` }, 400);
+  }
 });
 
 // --- Static file serving ---

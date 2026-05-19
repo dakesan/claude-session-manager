@@ -366,10 +366,97 @@ function Drawer({ session, onClose, onAction, toast }) {
   );
 }
 
+// ─── Path Browser ───────────────────────────────────────────────────────────
+function PathBrowser({ value, onChange }) {
+  const [open, setOpen] = useS(false);
+  const [dirs, setDirs] = useS([]);
+  const [current, setCurrent] = useS("");
+  const [parentPath, setParent] = useS(null);
+  const [loading, setLoading] = useS(false);
+  const ref = useR(null);
+
+  useE(() => {
+    if (!open) return;
+    const fn = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", fn);
+    return () => document.removeEventListener("mousedown", fn);
+  }, [open]);
+
+  const browse = async (path) => {
+    if (!window.CSM_API?.browse) return;
+    setLoading(true);
+    try {
+      const data = await window.CSM_API.browse(path || undefined);
+      setDirs(data.dirs || []);
+      setCurrent(data.current || "");
+      setParent(data.parent || null);
+    } catch {
+      setDirs([]);
+    }
+    setLoading(false);
+  };
+
+  const handleOpen = () => {
+    setOpen(true);
+    browse(value || undefined);
+  };
+
+  const handleSelect = (path) => {
+    onChange(path);
+    setOpen(false);
+  };
+
+  const handleNavigate = (path) => {
+    browse(path);
+  };
+
+  return (
+    <div style={{ position: "relative" }} ref={ref}>
+      <div style={{ display: "flex", gap: 6 }}>
+        <input
+          className="txt"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="~ (home directory)"
+          style={{ flex: 1, fontFamily: "var(--font-mono)", fontSize: 12 }}
+        />
+        <button className="btn" type="button" onClick={handleOpen} title="Browse directories">
+          <Ico.folder /> Browse
+        </button>
+      </div>
+      {open && (
+        <div className="path-browser">
+          <div className="path-browser-header">
+            <span className="path-browser-current">{current}</span>
+            <button className="btn btn-ghost btn-icon" onClick={() => handleSelect(current)} title="Select this directory">
+              <Ico.check />
+            </button>
+          </div>
+          {parentPath && (
+            <div className="path-browser-item path-browser-parent" onClick={() => handleNavigate(parentPath)}>
+              ↑ ..
+            </div>
+          )}
+          <div className="path-browser-list">
+            {loading && <div className="path-browser-empty">Loading…</div>}
+            {!loading && dirs.length === 0 && <div className="path-browser-empty">No subdirectories</div>}
+            {!loading && dirs.map((d) => (
+              <div key={d.path} className="path-browser-item" onDoubleClick={() => handleNavigate(d.path)} onClick={() => handleSelect(d.path)}>
+                <Ico.folder /> {d.name}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── New Session modal ───────────────────────────────────────────────────────
 function NewSessionModal({ open, onClose, onCreate }) {
   const [prompt, setPrompt] = useS("");
   const [name, setName] = useS("");
+  const [cwd, setCwd] = useS("");
   const [model, setModel] = useS("claude-sonnet-4-5");
   const [project, setProject] = useS("monorepo-web");
   const [rc, setRc] = useS("lab-server");
@@ -377,7 +464,7 @@ function NewSessionModal({ open, onClose, onCreate }) {
 
   useE(() => {
     if (open) {
-      setPrompt(""); setName("");
+      setPrompt(""); setName(""); setCwd("");
       setTimeout(() => taRef.current?.focus(), 50);
     }
   }, [open]);
@@ -395,7 +482,7 @@ function NewSessionModal({ open, onClose, onCreate }) {
   function submit() {
     const trimmed = prompt.trim();
     if (!trimmed) return;
-    onCreate({ prompt: trimmed, name: name.trim() || autoName(trimmed), model, project, rc });
+    onCreate({ prompt: trimmed, name: name.trim() || autoName(trimmed), cwd: cwd.trim() || undefined, model, project, rc });
     onClose();
   }
 
@@ -415,6 +502,9 @@ function NewSessionModal({ open, onClose, onCreate }) {
           <label>Prompt</label>
           <textarea ref={taRef} value={prompt} onChange={(e) => setPrompt(e.target.value)}
             placeholder='e.g. "Find and fix the flaky test in apps/web/__tests__/checkout-flow.spec.ts"' />
+
+          <label>Working directory</label>
+          <PathBrowser value={cwd} onChange={setCwd} />
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div>
