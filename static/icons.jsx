@@ -123,5 +123,12 @@ const Ico = {
       <path d="M2 4.5V12a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1H8.5L7 3H3a1 1 0 0 0-1 1.5Z" />
     </svg>
   ),
+  server: (p) => (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" {...p}>
+      <rect x="2" y="2" width="12" height="5" rx="1" /><rect x="2" y="9" width="12" height="5" rx="1" />
+      <circle cx="5" cy="4.5" r=".8" fill="currentColor" stroke="none" /><circle cx="5" cy="11.5" r=".8" fill="currentColor" stroke="none" />
+      <path d="M8 4.5h3M8 11.5h3" />
+    </svg>
+  ),
 };
 window.Ico = Ico;

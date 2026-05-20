@@ -102,9 +102,9 @@ function App() {
   // Actions — call backend API, then optimistically update UI
   const handleAction = uC(async (kind, s) => {
     try {
-      if (kind === "stop" && window.CSM_API) await window.CSM_API.stopSession(s.id);
-      if (kind === "respawn" && window.CSM_API) await window.CSM_API.respawnSession(s.id);
-      if (kind === "rm" && window.CSM_API) await window.CSM_API.removeSession(s.id);
+      if (kind === "stop" && window.CSM_API) await window.CSM_API.stopSession(s.sessionId || s.id, s.nodeUrl);
+      if (kind === "respawn" && window.CSM_API) await window.CSM_API.respawnSession(s.sessionId || s.id, s.nodeUrl);
+      if (kind === "rm" && window.CSM_API) await window.CSM_API.removeSession(s.sessionId || s.id, s.nodeUrl);
     } catch (e) {
       showToast(`Error: ${e.message}`);
       return;
@@ -127,7 +127,7 @@ function App() {
   const handleCreate = uC(async (opts) => {
     try {
       if (window.CSM_API) {
-        const newSession = await window.CSM_API.createSession(opts.prompt, opts.name, opts.cwd);
+        const newSession = await window.CSM_API.createSession(opts.prompt, opts.name, opts.cwd, opts.node);
         setSessions((prev) => [newSession, ...prev]);
         setSelectedId(newSession.id);
         showToast(`Launched ${newSession.name} · ${newSession.id}`);

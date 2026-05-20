@@ -131,6 +131,7 @@ function DetailTab({ s }) {
           ) : <span style={{ color: "var(--text-dim)" }}>—</span>}
         </dd>
         <dt>Started</dt><dd>{Pieces.fmtAgo(s.startedAt)}</dd>
+        {s.node && <><dt>Node</dt><dd className="sans"><Ico.server /> {s.node}</dd></>}
         {s.error && <><dt style={{ color: "var(--st-error)" }}>Error</dt><dd className="sans" style={{ color: "var(--st-error)" }}>{s.error}</dd></>}
       </dl>
 
@@ -156,7 +157,7 @@ function useRealLogs(session) {
     const fetchLogs = async () => {
       if (!window.CSM_API) return;
       try {
-        const raw = await window.CSM_API.getLogs(id);
+        const raw = await window.CSM_API.getLogs(id, session.nodeUrl);
         const parsed = raw.split("\n").filter(Boolean).map((line, i) => {
           const sev = line.startsWith("[user]") ? "info"
             : line.startsWith("[assistant]") ? "ok"
@@ -646,11 +647,12 @@ function NewSessionModal({ open, onClose, onCreate }) {
   const [model, setModel] = useS("claude-sonnet-4-5");
   const [project, setProject] = useS("monorepo-web");
   const [rc, setRc] = useS("lab-server");
+  const [node, setNode] = useS("");  // empty = local
   const taRef = useR(null);
 
   useE(() => {
     if (open) {
-      setPrompt(""); setName(""); setCwd("");
+      setPrompt(""); setName(""); setCwd(""); setNode("");
       setTimeout(() => taRef.current?.focus(), 50);
     }
   }, [open]);
@@ -668,7 +670,7 @@ function NewSessionModal({ open, onClose, onCreate }) {
   function submit() {
     const trimmed = prompt.trim();
     if (!trimmed) return;
-    onCreate({ prompt: trimmed, name: name.trim() || autoName(trimmed), cwd: cwd.trim() || undefined, model, project, rc });
+    onCreate({ prompt: trimmed, name: name.trim() || autoName(trimmed), cwd: cwd.trim() || undefined, model, project, rc, node: node || undefined });
     onClose();
   }
 
@@ -709,6 +711,19 @@ function NewSessionModal({ open, onClose, onCreate }) {
               </div>
             </div>
           </div>
+
+          {window.CSM_MODE === "host" && window.CSM_NODES.length > 0 && <>
+            <label>Target node</label>
+            <div className="opt-grid">
+              {window.CSM_NODES.map((n) => (
+                <div key={n.name} className={"opt" + (!n.online ? " opt-disabled" : "")} data-active={node === n.name || (!node && !n.url)}
+                  onClick={() => n.online && setNode(n.url ? n.name : "")}>
+                  <span className="lbl"><Ico.server /> {n.name}</span>
+                  <span className="h">{n.online ? `${n.sessionCount} sessions` : "offline"}</span>
+                </div>
+              ))}
+            </div>
+          </>}
 
           <label>Model</label>
           <div className="opt-grid">

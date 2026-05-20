@@ -181,6 +181,10 @@ function ProjectGroupedList({ sessions, selectedId, onSelect, onAction }) {
                       <span className="pgl-item-sep">·</span>
                       <span className="pgl-item-detail"><Ico.branch /> {s.branch}</span>
                     </>}
+                    {s.node && <>
+                      <span className="pgl-item-sep">·</span>
+                      <span className="pgl-item-detail pgl-item-node"><Ico.server /> {s.node}</span>
+                    </>}
                   </div>
                 </div>
                 <div className="pgl-item-right">
@@ -249,6 +253,7 @@ function ProjectKanban({ sessions, selectedId, onSelect, onAction }) {
                 </div>
                 <div className="kanban-card-foot">
                   {s.branch && <span className="kanban-card-branch"><Ico.branch /> {s.branch}</span>}
+                  {s.node && <span className="kanban-card-node"><Ico.server /> {s.node}</span>}
                   <span className="kanban-card-id">{s.id}</span>
                 </div>
               </div>

@@ -416,6 +416,9 @@ button { font: inherit; color: inherit; }
   height: 12px;
   opacity: .6;
 }
+.pgl-item-node {
+  color: var(--st-idle);
+}
 .pgl-item-sep {
   color: var(--border-strong);
   font-size: 10px;
@@ -549,6 +552,17 @@ button { font: inherit; color: inherit; }
   gap: 3px;
 }
 .kanban-card-branch svg {
+  width: 12px;
+  height: 12px;
+  opacity: .6;
+}
+.kanban-card-node {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--st-idle);
+}
+.kanban-card-node svg {
   width: 12px;
   height: 12px;
   opacity: .6;
@@ -834,6 +848,7 @@ button { font: inherit; color: inherit; }
 .opt[data-active="true"] { border-color: var(--text); background: var(--surface-2); }
 .opt .lbl { font-size: 14px; font-weight: 500; }
 .opt .h { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-dim); }
+.opt.opt-disabled { opacity: .4; cursor: not-allowed; pointer-events: none; }
 .modal-foot {
   display: flex; align-items: center; gap: 10px;
   padding: 16px 20px;

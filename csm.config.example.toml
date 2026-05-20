@@ -6,6 +6,12 @@
 host = "0.0.0.0"
 port = 8321
 
+# Operating mode:
+#   "standalone" — single node, no remote aggregation (default)
+#   "host"       — aggregates sessions from remote CSM nodes
+#   "client"     — serves local sessions only (no remote aggregation)
+# mode = "standalone"
+
 [paths]
 # Path to tmux binary (auto-detected from $PATH if omitted)
 # tmux = "/usr/bin/tmux"
@@ -19,3 +25,15 @@ port = 8321
 [session]
 # Flags passed to every `claude` invocation
 dangerously_skip_permissions = true
+
+# ─── Multi-node configuration (host mode only) ──────────────────────────────
+# Add [[remotes]] entries for each CSM node to aggregate.
+# Each node must be running CSM and accessible from this host.
+#
+# [[remotes]]
+# name = "lab-server"
+# url = "http://192.168.1.10:8321"
+#
+# [[remotes]]
+# name = "dev-machine"
+# url = "http://192.168.1.20:8321"

@@ -254,11 +254,66 @@ Session lifecycle:
 
 ## Configuration
 
-The server reads session data from `~/.claude/`. Override with `CLAUDE_CONFIG_DIR` env var.
+Copy `csm.config.example.toml` to `csm.config.toml` and edit as needed. The config file is gitignored.
 
-Binary paths (configured in `src/claude-cli.ts`):
-- tmux: `~/.local/share/mise/installs/tmux/3.6a/tmux`
-- claude: `~/.local/share/mise/installs/claude/2.1.143/claude`
+Configuration priority (highest wins):
+1. Environment variables (`HOST`, `PORT`, `CLAUDE_CONFIG_DIR`, `CSM_MODE`)
+2. `csm.config.toml` in project root
+3. Built-in defaults (auto-detects binary paths from `$PATH`)
+
+### Service management
+
+```bash
+systemctl --user status csm       # check status
+systemctl --user stop csm         # stop
+systemctl --user start csm        # start
+systemctl --user restart csm      # restart
+systemctl --user enable csm       # enable auto-start
+systemctl --user disable csm      # disable auto-start
+journalctl --user -u csm -f       # follow logs
+```
+
+### Multi-node mode
+
+CSM supports aggregating sessions from multiple machines into a single dashboard. Each machine runs its own CSM instance, and one machine is designated as the **host** that collects sessions from all **client** nodes.
+
+On each machine, install and start CSM as a systemd service:
+
+```bash
+git clone https://github.com/dakesan/claude-session-manager.git
+cd claude-session-manager
+npm install && npm run build
+node dist/cli.js install-service
+loginctl enable-linger $USER
+```
+
+On the host machine, configure `csm.config.toml`:
+
+```toml
+[server]
+host = "0.0.0.0"
+port = 8321
+mode = "host"
+
+[[remotes]]
+name = "lab-server"
+url = "http://192.168.1.10:8321"
+
+[[remotes]]
+name = "dev-machine"
+url = "http://192.168.1.20:8321"
+```
+
+Client machines can use `mode = "client"` or the default `"standalone"`. No additional configuration is needed on clients.
+
+How it works:
+- The host's `/api/sessions` merges local sessions with all remote sessions
+- Each session carries a `node` field indicating which machine it belongs to
+- Stop, respawn, remove, and log operations are proxied to the correct node
+- New sessions can be created on any node via the target node selector in the UI
+- Node health and session counts are available at `GET /api/nodes`
+
+Nodes must be reachable from the host. Recommended: **Tailscale** for secure, zero-config networking. No authentication is implemented — rely on network-level security.
 
 ## License
 

@@ -16,10 +16,19 @@ import { execSync } from "node:child_process";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+export interface RemoteNode {
+  /** Display name for this node */
+  name: string;
+  /** Base URL of the remote CSM instance (e.g. "http://192.168.1.10:8321") */
+  url: string;
+}
+
 export interface CsmConfig {
   server: {
     host: string;
     port: number;
+    /** Operating mode: standalone (default), host (aggregates remotes), client (serves local only) */
+    mode: "standalone" | "host" | "client";
   };
   paths: {
     tmux: string;
@@ -29,6 +38,8 @@ export interface CsmConfig {
   session: {
     dangerouslySkipPermissions: boolean;
   };
+  /** Remote CSM nodes to aggregate (only used when mode = "host") */
+  remotes: RemoteNode[];
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -67,6 +78,7 @@ export function loadConfig(): CsmConfig {
     server: {
       host: "0.0.0.0",
       port: 8321,
+      mode: "standalone",
     },
     paths: {
       tmux: whichSync("tmux") || "tmux",
@@ -76,6 +88,7 @@ export function loadConfig(): CsmConfig {
     session: {
       dangerouslySkipPermissions: true,
     },
+    remotes: [],
   };
 
   // Layer: TOML file
@@ -89,6 +102,9 @@ export function loadConfig(): CsmConfig {
       if (server) {
         if (typeof server.host === "string") config.server.host = server.host;
         if (typeof server.port === "number") config.server.port = server.port;
+        if (typeof server.mode === "string" && ["standalone", "host", "client"].includes(server.mode)) {
+          config.server.mode = server.mode as CsmConfig["server"]["mode"];
+        }
       }
 
       const paths = toml.paths as Record<string, unknown> | undefined;
@@ -105,6 +121,16 @@ export function loadConfig(): CsmConfig {
         }
       }
 
+      // Parse [[remotes]] array
+      const remotes = toml.remotes as Array<Record<string, unknown>> | undefined;
+      if (Array.isArray(remotes)) {
+        for (const r of remotes) {
+          if (typeof r.name === "string" && typeof r.url === "string") {
+            config.remotes.push({ name: r.name, url: r.url.replace(/\/+$/, "") });
+          }
+        }
+      }
+
       console.log(`  Config loaded from ${configFile}`);
     } catch (e) {
       console.error(`Warning: Failed to parse ${configFile}: ${e instanceof Error ? e.message : e}`);
@@ -115,6 +141,9 @@ export function loadConfig(): CsmConfig {
   if (process.env.HOST) config.server.host = process.env.HOST;
   if (process.env.PORT) config.server.port = parseInt(process.env.PORT, 10);
   if (process.env.CLAUDE_CONFIG_DIR) config.paths.claudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+  if (process.env.CSM_MODE && ["standalone", "host", "client"].includes(process.env.CSM_MODE)) {
+    config.server.mode = process.env.CSM_MODE as CsmConfig["server"]["mode"];
+  }
 
   return config;
 }

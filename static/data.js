@@ -10,6 +10,8 @@ window.REMOTE_CONTROLS = [];
 window.STATUS_ORDER = ["working", "waiting", "stopped"];
 window.SEED_SESSIONS = [];
 window.CSM_HOSTNAME = "";
+window.CSM_MODE = "standalone";
+window.CSM_NODES = [];
 
 // ─── Log templates (fallback for synthetic streamer) ─────────────────────────
 window.LOG_TEMPLATES = {
@@ -62,6 +64,8 @@ function mapSession(s) {
     pid: s.pid || null,
     sessionId: s.sessionId,
     version: s.version || null,
+    node: s.node || null,
+    nodeUrl: s.nodeUrl || null,
   };
 }
 
@@ -92,35 +96,39 @@ function deriveProjects(sessions) {
 }
 
 // ─── API action wrappers ─────────────────────────────────────────────────────
+// Helper: append nodeUrl as query param for remote proxy
+function nodeQuery(nodeUrl) {
+  return nodeUrl ? `?nodeUrl=${encodeURIComponent(nodeUrl)}` : "";
+}
+
 window.CSM_API = {
-  async createSession(prompt, name, cwd) {
+  async createSession(prompt, name, cwd, node) {
     const res = await fetch(`${API}/sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, name, cwd }),
+      body: JSON.stringify({ prompt, name, cwd, node }),
     });
     if (!res.ok) throw new Error((await res.json()).error || res.statusText);
     return mapSession(await res.json());
   },
 
-  async stopSession(id) {
-    // id here is shortId; backend accepts both shortId and sessionId
-    const res = await fetch(`${API}/sessions/${id}/stop`, { method: "POST" });
+  async stopSession(id, nodeUrl) {
+    const res = await fetch(`${API}/sessions/${id}/stop${nodeQuery(nodeUrl)}`, { method: "POST" });
     if (!res.ok) throw new Error((await res.json()).error || res.statusText);
   },
 
-  async respawnSession(id) {
-    const res = await fetch(`${API}/sessions/${id}/respawn`, { method: "POST" });
+  async respawnSession(id, nodeUrl) {
+    const res = await fetch(`${API}/sessions/${id}/respawn${nodeQuery(nodeUrl)}`, { method: "POST" });
     if (!res.ok) throw new Error((await res.json()).error || res.statusText);
   },
 
-  async removeSession(id) {
-    const res = await fetch(`${API}/sessions/${id}`, { method: "DELETE" });
+  async removeSession(id, nodeUrl) {
+    const res = await fetch(`${API}/sessions/${id}${nodeQuery(nodeUrl)}`, { method: "DELETE" });
     if (!res.ok) throw new Error((await res.json()).error || res.statusText);
   },
 
-  async getLogs(id) {
-    const res = await fetch(`${API}/sessions/${id}/logs`);
+  async getLogs(id, nodeUrl) {
+    const res = await fetch(`${API}/sessions/${id}/logs${nodeQuery(nodeUrl)}`);
     if (!res.ok) return "(error fetching logs)";
     const data = await res.json();
     return data.logs || "(no output)";
@@ -133,6 +141,16 @@ window.CSM_API = {
     return res.json();
   },
 
+  async fetchNodes() {
+    try {
+      const res = await fetch(`${API}/nodes`);
+      if (!res.ok) return [];
+      return res.json();
+    } catch {
+      return [];
+    }
+  },
+
   fetchSessions,
 };
 
@@ -142,13 +160,22 @@ window.CSM_API = {
   window.SEED_SESSIONS = sessions;
   window.PROJECTS = deriveProjects(sessions);
 
-  // Get health info (hostname)
+  // Get health info (hostname, mode)
   try {
     const res = await fetch(`${API}/health`);
     if (res.ok) {
       const health = await res.json();
       if (health.hostname) window.CSM_HOSTNAME = health.hostname;
+      if (health.mode) window.CSM_MODE = health.mode;
     }
+  } catch {
+    // ignore
+  }
+
+  // Get node statuses (multi-node mode)
+  try {
+    const nodes = await window.CSM_API.fetchNodes();
+    if (Array.isArray(nodes)) window.CSM_NODES = nodes;
   } catch {
     // ignore
   }
