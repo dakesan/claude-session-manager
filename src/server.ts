@@ -70,6 +70,7 @@ app.post("/api/sessions", async (c) => {
     prompt: string;
     name?: string;
     cwd?: string;
+    model?: string;
     node?: string; // target node name (host mode only)
   }>();
   if (!body.prompt) return c.json({ error: "prompt is required" }, 400);
@@ -79,13 +80,13 @@ app.post("/api/sessions", async (c) => {
     const targetNode = CONFIG.remotes.find((r) => r.name === body.node);
     if (!targetNode) return c.json({ error: `Unknown node: ${body.node}` }, 400);
 
-    const result = await remote.proxyCreate(targetNode.url, body.prompt, body.name, body.cwd);
+    const result = await remote.proxyCreate(targetNode.url, body.prompt, body.name, body.cwd, body.model);
     if (!result) return c.json({ error: `Failed to create session on ${body.node}` }, 502);
     return c.json({ ...result, node: body.node, nodeUrl: targetNode.url }, 201);
   }
 
   try {
-    const session = await cli.createSession(body.prompt, body.name, body.cwd);
+    const session = await cli.createSession(body.prompt, body.name, body.cwd, body.model);
     return c.json({ ...session, node: hostname(), nodeUrl: null }, 201);
   } catch (e) {
     return c.json(
@@ -183,7 +184,17 @@ app.get("/api/roster", async (c) => {
 // --- Directory browsing ---
 
 app.get("/api/browse", async (c) => {
-  const raw = c.req.query("path") || homedir();
+  const rawPath = c.req.query("path");
+  const nodeUrl = c.req.query("nodeUrl");
+
+  // Proxy to remote node when in host mode
+  if (nodeUrl) {
+    const data = await remote.proxyBrowse(nodeUrl, rawPath);
+    if (!data) return c.json({ error: "Failed to browse remote node" }, 502);
+    return c.json(data);
+  }
+
+  const raw = rawPath || homedir();
   const target = resolve(raw.replace(/^~/, homedir()));
 
   // Prevent traversal outside home

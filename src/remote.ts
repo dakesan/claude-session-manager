@@ -192,12 +192,13 @@ export async function proxyCreate(
   prompt: string,
   name?: string,
   cwd?: string,
+  model?: string,
 ): Promise<Session | null> {
   try {
     const res = await fetchWithTimeout(`${nodeUrl}/api/sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, name, cwd }),
+      body: JSON.stringify({ prompt, name, cwd, model }),
     });
     if (!res.ok) return null;
     return (await res.json()) as Session;
@@ -218,6 +219,29 @@ export async function proxyGetLogs(
     return data.logs || "(no output)";
   } catch {
     return "(remote node unreachable)";
+  }
+}
+
+/** Proxy a directory-browse request to a remote node */
+export async function proxyBrowse(
+  nodeUrl: string,
+  path?: string,
+): Promise<{
+  current: string;
+  parent: string | null;
+  dirs: { name: string; path: string }[];
+} | null> {
+  try {
+    const qs = path ? `?path=${encodeURIComponent(path)}` : "";
+    const res = await fetchWithTimeout(`${nodeUrl}/api/browse${qs}`);
+    if (!res.ok) return null;
+    return (await res.json()) as {
+      current: string;
+      parent: string | null;
+      dirs: { name: string; path: string }[];
+    };
+  } catch {
+    return null;
   }
 }
 

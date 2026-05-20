@@ -40,6 +40,20 @@ function App() {
             }
             return projects;
           })() : [];
+          window.USAGE = (function() {
+            const map = new Map();
+            for (const s of fresh) {
+              if (!s.cwd) continue;
+              const node = s.node || (window.CSM_HOSTNAME || "local");
+              const nodeUrl = s.nodeUrl || null;
+              const key = `${node}|${s.cwd}`;
+              const name = s.cwd.split("/").filter(Boolean).pop() || s.cwd;
+              const cur = map.get(key);
+              if (cur) cur.count += 1;
+              else map.set(key, { cwd: s.cwd, node, nodeUrl, name, count: 1 });
+            }
+            return [...map.values()].sort((a, b) => b.count - a.count);
+          })();
         }
       }
     };
@@ -127,7 +141,7 @@ function App() {
   const handleCreate = uC(async (opts) => {
     try {
       if (window.CSM_API) {
-        const newSession = await window.CSM_API.createSession(opts.prompt, opts.name, opts.cwd, opts.node);
+        const newSession = await window.CSM_API.createSession(opts.prompt, opts.name, opts.cwd, opts.node, opts.model);
         setSessions((prev) => [newSession, ...prev]);
         setSelectedId(newSession.id);
         showToast(`Launched ${newSession.name} · ${newSession.id}`);

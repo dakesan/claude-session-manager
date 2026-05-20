@@ -479,6 +479,7 @@ export async function createSession(
   prompt: string,
   name?: string,
   cwd?: string,
+  model?: string,
 ): Promise<Session> {
   const sessionId = randomUUID();
   const sid = shortId(sessionId);
@@ -494,6 +495,9 @@ export async function createSession(
     "--remote-control",
     rcName,
   ];
+  if (model) {
+    claudeArgs.push("--model", model);
+  }
   if (CONFIG.session.dangerouslySkipPermissions) {
     claudeArgs.push("--dangerously-skip-permissions");
   }

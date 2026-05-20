@@ -6,6 +6,7 @@ const API = "/api";
 // ─── Static config ───────────────────────────────────────────────────────────
 
 window.PROJECTS = [];
+window.USAGE = [];
 window.REMOTE_CONTROLS = [];
 window.STATUS_ORDER = ["working", "waiting", "stopped"];
 window.SEED_SESSIONS = [];
@@ -95,6 +96,25 @@ function deriveProjects(sessions) {
   return projects;
 }
 
+// ─── Used ranking: (cwd, node) usage frequency across sessions ─────────────
+function deriveUsage(sessions) {
+  const map = new Map(); // `${node}|${cwd}` -> {cwd, node, nodeUrl, name, count}
+  for (const s of sessions) {
+    if (!s.cwd) continue;
+    const node = s.node || (window.CSM_HOSTNAME || "local");
+    const nodeUrl = s.nodeUrl || null;
+    const key = `${node}|${s.cwd}`;
+    const name = s.cwd.split("/").filter(Boolean).pop() || s.cwd;
+    const cur = map.get(key);
+    if (cur) {
+      cur.count += 1;
+    } else {
+      map.set(key, { cwd: s.cwd, node, nodeUrl, name, count: 1 });
+    }
+  }
+  return [...map.values()].sort((a, b) => b.count - a.count);
+}
+
 // ─── API action wrappers ─────────────────────────────────────────────────────
 // Helper: append nodeUrl as query param for remote proxy
 function nodeQuery(nodeUrl) {
@@ -102,11 +122,11 @@ function nodeQuery(nodeUrl) {
 }
 
 window.CSM_API = {
-  async createSession(prompt, name, cwd, node) {
+  async createSession(prompt, name, cwd, node, model) {
     const res = await fetch(`${API}/sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, name, cwd, node }),
+      body: JSON.stringify({ prompt, name, cwd, node, model }),
     });
     if (!res.ok) throw new Error((await res.json()).error || res.statusText);
     return mapSession(await res.json());
@@ -134,8 +154,12 @@ window.CSM_API = {
     return data.logs || "(no output)";
   },
 
-  async browse(path) {
-    const url = path ? `${API}/browse?path=${encodeURIComponent(path)}` : `${API}/browse`;
+  async browse(path, nodeUrl) {
+    const params = new URLSearchParams();
+    if (path) params.set("path", path);
+    if (nodeUrl) params.set("nodeUrl", nodeUrl);
+    const qs = params.toString();
+    const url = qs ? `${API}/browse?${qs}` : `${API}/browse`;
     const res = await fetch(url);
     if (!res.ok) throw new Error((await res.json()).error || res.statusText);
     return res.json();
@@ -159,6 +183,7 @@ window.CSM_API = {
   const sessions = await fetchSessions();
   window.SEED_SESSIONS = sessions;
   window.PROJECTS = deriveProjects(sessions);
+  window.USAGE = deriveUsage(sessions);
 
   // Get health info (hostname, mode)
   try {

@@ -554,7 +554,7 @@ function Drawer({ session, onClose, onAction, toast }) {
 }
 
 // ─── Path Browser ───────────────────────────────────────────────────────────
-function PathBrowser({ value, onChange }) {
+function PathBrowser({ value, onChange, nodeUrl, nodeLabel }) {
   const [open, setOpen] = useS(false);
   const [dirs, setDirs] = useS([]);
   const [current, setCurrent] = useS("");
@@ -573,7 +573,7 @@ function PathBrowser({ value, onChange }) {
     if (!window.CSM_API?.browse) return;
     setLoading(true);
     try {
-      const data = await window.CSM_API.browse(path || undefined);
+      const data = await window.CSM_API.browse(path || undefined, nodeUrl || undefined);
       setDirs(data.dirs || []);
       setCurrent(data.current || "");
       setParent(data.parent || null);
@@ -614,7 +614,10 @@ function PathBrowser({ value, onChange }) {
       {open && (
         <div className="path-browser">
           <div className="path-browser-header">
-            <span className="path-browser-current">{current}</span>
+            <span className="path-browser-current">
+              {nodeLabel ? <span style={{ color: "var(--text-dim)", marginRight: 6 }}>{nodeLabel}:</span> : null}
+              {current}
+            </span>
             <button className="btn btn-ghost btn-icon" onClick={() => handleSelect(current)} title="Select this directory">
               <Ico.check />
             </button>
@@ -628,7 +631,7 @@ function PathBrowser({ value, onChange }) {
             {loading && <div className="path-browser-empty">Loading…</div>}
             {!loading && dirs.length === 0 && <div className="path-browser-empty">No subdirectories</div>}
             {!loading && dirs.map((d) => (
-              <div key={d.path} className="path-browser-item" onDoubleClick={() => handleNavigate(d.path)} onClick={() => handleSelect(d.path)}>
+              <div key={d.path} className="path-browser-item" onClick={() => handleNavigate(d.path)} title="Enter directory">
                 <Ico.folder /> {d.name}
               </div>
             ))}
@@ -644,15 +647,13 @@ function NewSessionModal({ open, onClose, onCreate }) {
   const [prompt, setPrompt] = useS("");
   const [name, setName] = useS("");
   const [cwd, setCwd] = useS("");
-  const [model, setModel] = useS("claude-sonnet-4-5");
-  const [project, setProject] = useS("monorepo-web");
-  const [rc, setRc] = useS("lab-server");
-  const [node, setNode] = useS("");  // empty = local
+  const [model, setModel] = useS("");          // "" = CLI default
+  const [node, setNode] = useS("");            // empty = local
   const taRef = useR(null);
 
   useE(() => {
     if (open) {
-      setPrompt(""); setName(""); setCwd(""); setNode("");
+      setPrompt(""); setName(""); setCwd(""); setNode(""); setModel("");
       setTimeout(() => taRef.current?.focus(), 50);
     }
   }, [open]);
@@ -670,7 +671,7 @@ function NewSessionModal({ open, onClose, onCreate }) {
   function submit() {
     const trimmed = prompt.trim();
     if (!trimmed) return;
-    onCreate({ prompt: trimmed, name: name.trim() || autoName(trimmed), cwd: cwd.trim() || undefined, model, project, rc, node: node || undefined });
+    onCreate({ prompt: trimmed, name: name.trim() || autoName(trimmed), cwd: cwd.trim() || undefined, model: model || undefined, node: node || undefined });
     onClose();
   }
 
@@ -687,37 +688,16 @@ function NewSessionModal({ open, onClose, onCreate }) {
           <div className="s">claude --bg "&lt;prompt&gt;" — runs detached, returns a short id.</div>
         </div>
         <div className="modal-body">
-          <label>Prompt</label>
-          <textarea ref={taRef} value={prompt} onChange={(e) => setPrompt(e.target.value)}
-            placeholder='e.g. "Find and fix the flaky test in apps/web/__tests__/checkout-flow.spec.ts"' />
-
-          <label>Working directory</label>
-          <PathBrowser value={cwd} onChange={setCwd} />
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <div>
-              <label>Name <span style={{ textTransform: "none", letterSpacing: 0, color: "var(--text-dim)", fontWeight: 400 }}>optional</span></label>
-              <input className="txt" value={name} onChange={(e) => setName(e.target.value)} placeholder={prompt ? autoName(prompt) : "auto"} />
-            </div>
-            <div>
-              <label>Remote control</label>
-              <div style={{ display: "flex", gap: 6 }}>
-                {window.REMOTE_CONTROLS.map((r) => (
-                  <div key={r.name} className="opt" data-active={rc === r.name} onClick={() => setRc(r.name)} style={{ flex: 1, padding: "8px 10px" }}>
-                    <span className="lbl" style={{ fontSize: 11.5 }}>{r.name}</span>
-                    <span className="h">{r.active}/{r.capacity}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
           {window.CSM_MODE === "host" && window.CSM_NODES.length > 0 && <>
             <label>Target node</label>
             <div className="opt-grid">
               {window.CSM_NODES.map((n) => (
                 <div key={n.name} className={"opt" + (!n.online ? " opt-disabled" : "")} data-active={node === n.name || (!node && !n.url)}
-                  onClick={() => n.online && setNode(n.url ? n.name : "")}>
+                  onClick={() => {
+                    if (!n.online) return;
+                    const next = n.url ? n.name : "";
+                    if (next !== node) { setNode(next); setCwd(""); }
+                  }}>
                   <span className="lbl"><Ico.server /> {n.name}</span>
                   <span className="h">{n.online ? `${n.sessionCount} sessions` : "offline"}</span>
                 </div>
@@ -725,30 +705,56 @@ function NewSessionModal({ open, onClose, onCreate }) {
             </div>
           </>}
 
+          <label>Prompt</label>
+          <textarea ref={taRef} value={prompt} onChange={(e) => setPrompt(e.target.value)}
+            placeholder='e.g. "Find and fix the flaky test in apps/web/__tests__/checkout-flow.spec.ts"' />
+
+          <label>Working directory</label>
+          <PathBrowser
+            value={cwd}
+            onChange={setCwd}
+            nodeUrl={(() => {
+              const n = (window.CSM_NODES || []).find((x) => x.name === node);
+              return n?.url || null;
+            })()}
+            nodeLabel={node || (window.CSM_HOSTNAME || "local")}
+          />
+
+          <label>Name <span style={{ textTransform: "none", letterSpacing: 0, color: "var(--text-dim)", fontWeight: 400 }}>optional</span></label>
+          <input className="txt" value={name} onChange={(e) => setName(e.target.value)} placeholder={prompt ? autoName(prompt) : "auto"} />
+
           <label>Model</label>
           <div className="opt-grid">
             {[
-              { v: "claude-haiku-4-5",  l: "Haiku 4.5",  s: "fast · cheap" },
-              { v: "claude-sonnet-4-5", l: "Sonnet 4.5", s: "balanced · default" },
-              { v: "claude-opus-4-5",   l: "Opus 4.5",   s: "deepest · slowest" },
-              { v: "claude-sonnet-4-5-thinking", l: "Sonnet 4.5 + thinking", s: "extended reasoning" },
+              { v: "",       l: "Default", s: "CLI default" },
+              { v: "haiku",  l: "Haiku",   s: "alias · fast · cheap" },
+              { v: "sonnet", l: "Sonnet",  s: "alias · balanced" },
+              { v: "opus",   l: "Opus",    s: "alias · deepest" },
             ].map((m) => (
-              <div key={m.v} className="opt" data-active={model === m.v} onClick={() => setModel(m.v)}>
+              <div key={m.v || "default"} className="opt" data-active={model === m.v} onClick={() => setModel(m.v)}>
                 <span className="lbl">{m.l}</span>
                 <span className="h">{m.s}</span>
               </div>
             ))}
           </div>
 
-          <label>Project</label>
-          <div className="opt-grid">
-            {window.PROJECTS.map((p) => (
-              <div key={p.id} className="opt" data-active={project === p.id} onClick={() => setProject(p.id)}>
-                <span className="lbl">{p.name}</span>
-                <span className="h">{p.id}</span>
-              </div>
-            ))}
-          </div>
+          {(window.USAGE || []).length > 0 && <>
+            <label>Recently used <span style={{ textTransform: "none", letterSpacing: 0, color: "var(--text-dim)", fontWeight: 400 }}>click to set node + working directory</span></label>
+            <div className="opt-grid">
+              {(window.USAGE || []).slice(0, 12).map((u) => {
+                const targetNodeName = u.nodeUrl ? u.node : "";
+                const active = (node === targetNodeName) && (cwd === u.cwd);
+                return (
+                  <div key={`${u.node}|${u.cwd}`} className="opt" data-active={active}
+                    onClick={() => { setNode(targetNodeName); setCwd(u.cwd); }}
+                    title={u.cwd}>
+                    <span className="lbl">{u.name}</span>
+                    <span className="h"><Ico.server /> {u.node} · {u.count}x</span>
+                  </div>
+                );
+              })}
+            </div>
+          </>}
         </div>
 
         <div className="modal-foot">
