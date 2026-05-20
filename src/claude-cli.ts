@@ -300,6 +300,53 @@ async function readCsmSessions(): Promise<Session[]> {
 }
 
 /**
+ * Persist sessions that have no CSM metadata file yet. Snapshots whatever
+ * is known (sessionId, cwd, name, prompt, etc.) into ~/.claude/csm-sessions
+ * so the entry survives after the native session file is cleaned up.
+ */
+async function persistDiscoveredSessions(
+  sessions: Session[],
+  alreadyPersisted: Set<string>,
+): Promise<void> {
+  const toWrite = sessions.filter((s) => !alreadyPersisted.has(s.sessionId));
+  if (toWrite.length === 0) return;
+
+  const csmDir = getCsmDir();
+  if (!existsSync(csmDir)) {
+    try {
+      await mkdir(csmDir, { recursive: true });
+    } catch {
+      return;
+    }
+  }
+
+  await Promise.all(
+    toWrite.map(async (s) => {
+      const meta = {
+        sessionId: s.sessionId,
+        pid: s.pid,
+        name: s.name || `discovered-${s.shortId}`,
+        prompt: s.prompt || "",
+        cwd: s.cwd,
+        createdAt: s.createdAt,
+        tmuxSession: s.tmuxSession,
+        rcUrl: s.rcUrl,
+        model: s.model,
+        discovered: true,
+      };
+      try {
+        await writeFile(
+          join(getCsmDir(), `${s.sessionId}.json`),
+          JSON.stringify(meta, null, 2),
+        );
+      } catch {
+        // best effort — skip on failure
+      }
+    }),
+  );
+}
+
+/**
  * Enrich sessions with AI-generated titles from JSONL transcripts.
  * Searches all project directories for matching sessionId.
  */
@@ -381,6 +428,10 @@ export async function listSessions(): Promise<Session[]> {
     readCsmSessions(),
   ]);
 
+  // Track which sessions already have a persisted CSM metadata file.
+  // Anything missing gets persisted below so it survives native cleanup.
+  const persistedIds = new Set(csm.map((s) => s.sessionId));
+
   // Deduplicate by sessionId (CSM data takes priority for enrichment)
   const byId = new Map<string, Session>();
   for (const s of native) byId.set(s.sessionId, s);
@@ -391,6 +442,8 @@ export async function listSessions(): Promise<Session[]> {
       existing.name = existing.name || s.name;
       existing.prompt = existing.prompt || s.prompt;
       existing.model = existing.model || s.model;
+      existing.tmuxSession = existing.tmuxSession || s.tmuxSession;
+      existing.rcUrl = existing.rcUrl || s.rcUrl;
     } else {
       byId.set(s.sessionId, s);
     }
@@ -400,6 +453,12 @@ export async function listSessions(): Promise<Session[]> {
 
   // Enrich with titles from JSONL transcripts
   await enrichWithTitles(sessions);
+
+  // Persist any session that does not yet have a CSM metadata file, so the
+  // entry survives after claude removes its ~/.claude/sessions/<pid>.json
+  // file on exit. Without this, ad-hoc / pre-CSM sessions vanish from the
+  // dashboard and cannot be respawned.
+  await persistDiscoveredSessions(sessions, persistedIds);
 
   // Refine state: distinguish "working" (Claude processing) from "waiting" (user input needed)
   await Promise.all(
