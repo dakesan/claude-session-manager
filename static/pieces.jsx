@@ -110,6 +110,9 @@ function Header({ theme, onToggleTheme, query, onQuery, onNew, onOpenPalette, te
             <Ico.grid />
           </button>
         </div>
+        <a className="btn btn-ghost" href="/schedules" title="Scheduled jobs" style={{ textDecoration: "none" }}>
+          Schedules
+        </a>
         <button className={"btn btn-ghost btn-icon" + (terminalOpen ? " btn-active" : "")} onClick={onToggleTerminal} title="Toggle terminal (⌘`)" aria-label="Toggle terminal">
           <Ico.terminal />
         </button>

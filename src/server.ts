@@ -12,6 +12,8 @@ import { Hono } from "hono";
 import * as cli from "./claude-cli.js";
 import { CONFIG } from "./config.js";
 import * as remote from "./remote.js";
+import * as schedulesStore from "./schedules.js";
+import * as scheduler from "./scheduler.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const STATIC_DIR = join(__dirname, "..", "static");
@@ -181,6 +183,27 @@ app.get("/api/roster", async (c) => {
   return c.json(roster);
 });
 
+// --- Models ---
+// Canonical list of Claude models for UI pickers.  Kept inline because the
+// `claude` CLI doesn't expose a "list-models" subcommand; update this when
+// new models are released.
+app.get("/api/models", (c) => {
+  return c.json({
+    // Aliases that always resolve to the latest model in their tier.
+    aliases: [
+      { id: "opus",   label: "Opus",   description: "latest Opus (deepest reasoning)" },
+      { id: "sonnet", label: "Sonnet", description: "latest Sonnet (balanced)" },
+      { id: "haiku",  label: "Haiku",  description: "latest Haiku (fastest, cheapest)" },
+    ],
+    // Specific pinned model IDs.
+    models: [
+      { id: "claude-opus-4-7",            label: "Opus 4.7",   tier: "opus",   release: "latest" },
+      { id: "claude-sonnet-4-6",          label: "Sonnet 4.6", tier: "sonnet", release: "latest" },
+      { id: "claude-haiku-4-5-20251001",  label: "Haiku 4.5",  tier: "haiku",  release: "latest" },
+    ],
+  });
+});
+
 // --- Directory browsing ---
 
 app.get("/api/browse", async (c) => {
@@ -227,6 +250,91 @@ app.get("/api/browse", async (c) => {
   }
 });
 
+// --- Schedule routes ---
+
+app.get("/api/schedules", async (c) => {
+  const list = await schedulesStore.listSchedules();
+  return c.json(list);
+});
+
+app.post("/api/schedules", async (c) => {
+  const body = await c.req.json<{
+    name?: string;
+    cron?: string;
+    timezone?: string;
+    prompt?: string;
+    cwd?: string;
+    model?: string;
+    enabled?: boolean;
+  }>();
+
+  if (!body.name || !body.name.trim()) return c.json({ error: "name is required" }, 400);
+  if (!body.cron || !body.cron.trim()) return c.json({ error: "cron is required" }, 400);
+  if (!scheduler.isValidCron(body.cron)) return c.json({ error: `Invalid cron expression: ${body.cron}` }, 400);
+  if (!body.prompt || !body.prompt.trim()) return c.json({ error: "prompt is required" }, 400);
+
+  const created = await schedulesStore.createSchedule({
+    name: body.name,
+    cron: body.cron,
+    timezone: body.timezone,
+    prompt: body.prompt,
+    cwd: body.cwd,
+    model: body.model,
+    enabled: body.enabled,
+  });
+  await scheduler.registerSchedule(created);
+
+  // Re-read to surface the nextRun the scheduler just computed
+  const fresh = await schedulesStore.getSchedule(created.id);
+  return c.json(fresh || created, 201);
+});
+
+app.get("/api/schedules/:id", async (c) => {
+  const id = c.req.param("id");
+  const s = await schedulesStore.getSchedule(id);
+  if (!s) return c.json({ error: "Not found" }, 404);
+  return c.json(s);
+});
+
+app.put("/api/schedules/:id", async (c) => {
+  const id = c.req.param("id");
+  const body = await c.req.json<{
+    name?: string;
+    cron?: string;
+    timezone?: string;
+    prompt?: string;
+    cwd?: string;
+    model?: string;
+    enabled?: boolean;
+  }>();
+
+  if (body.cron !== undefined && !scheduler.isValidCron(body.cron)) {
+    return c.json({ error: `Invalid cron expression: ${body.cron}` }, 400);
+  }
+
+  const updated = await schedulesStore.updateSchedule(id, body);
+  if (!updated) return c.json({ error: "Not found" }, 404);
+  await scheduler.registerSchedule(updated);
+
+  const fresh = await schedulesStore.getSchedule(id);
+  return c.json(fresh || updated);
+});
+
+app.delete("/api/schedules/:id", async (c) => {
+  const id = c.req.param("id");
+  scheduler.unregisterSchedule(id);
+  const ok = await schedulesStore.deleteSchedule(id);
+  if (!ok) return c.json({ error: "Not found" }, 404);
+  return c.json({ status: "deleted", id });
+});
+
+app.post("/api/schedules/:id/run", async (c) => {
+  const id = c.req.param("id");
+  const updated = await scheduler.fireSchedule(id, "manual");
+  if (!updated) return c.json({ error: "Not found" }, 404);
+  return c.json(updated);
+});
+
 // --- Static file serving ---
 
 const MIME_TYPES: Record<string, string> = {
@@ -246,6 +354,15 @@ app.get("/", async (c) => {
     return c.html(html);
   } catch {
     return c.text("index.html not found", 404);
+  }
+});
+
+app.get("/schedules", async (c) => {
+  try {
+    const html = await readFile(join(STATIC_DIR, "schedules.html"), "utf-8");
+    return c.html(html);
+  } catch {
+    return c.text("schedules.html not found", 404);
   }
 });
 

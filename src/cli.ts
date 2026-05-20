@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 
 import { app } from "./server.js";
 import { CONFIG } from "./config.js";
+import { initScheduler } from "./scheduler.js";
 
 // ---------------------------------------------------------------------------
 // Subcommand routing
@@ -248,4 +249,8 @@ wss.on("connection", (ws: WsWebSocket, req) => {
 server.listen(port, host, () => {
   console.log(`✻ Claude Session Manager listening on http://${host}:${port}`);
   console.log(`  WebSocket terminal at ws://${host}:${port}/ws/terminal`);
+  // Load persisted schedules and start cron timers
+  void initScheduler().catch((e) => {
+    console.error("Failed to initialize scheduler:", e);
+  });
 });

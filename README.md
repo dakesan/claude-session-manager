@@ -181,6 +181,47 @@ echo $SESSION | jq -r '.rcUrl'
 curl -X DELETE http://lab:8321/api/sessions/$(echo $SESSION | jq -r '.shortId')
 ```
 
+## Scheduled jobs
+
+CSM can run any prompt as a Claude session on a recurring cron schedule — useful for daily automations such as exporting Plaud transcripts, sending a Slack digest, or running any other skill at a fixed time.
+
+Schedules are stored as JSON files under `~/.claude/csm-schedules/<id>.json` and are loaded into a cron engine at server startup. When a schedule fires, CSM creates a regular interactive session (same code path as a manually-created session) — so progress is visible from the normal dashboard and Remote Control.
+
+### UI
+
+Open `http://localhost:8321/schedules` (or click the **Schedules** link in the main dashboard header). The page is intentionally separate from the session dashboard.
+
+You can pick a preset frequency (Daily / Weekly / Hourly) or write a custom 5-field cron expression. Each schedule has an enable toggle, "Run now" button, and an inline history of recent fires.
+
+### API
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET    | `/api/schedules` | List all schedules |
+| POST   | `/api/schedules` | Create a schedule |
+| GET    | `/api/schedules/:id` | Get a schedule |
+| PUT    | `/api/schedules/:id` | Update a schedule (any subset of fields) |
+| DELETE | `/api/schedules/:id` | Delete a schedule |
+| POST   | `/api/schedules/:id/run` | Fire the schedule immediately, ignoring cron timing |
+
+Schedule object fields: `id`, `name`, `cron` (5-field), `timezone` (default `Asia/Tokyo`), `prompt`, `cwd`, `model`, `enabled`, `nextRun`, `lastRun`, `history`.
+
+```bash
+curl -X POST http://localhost:8321/api/schedules \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "Plaud daily sync",
+    "cron": "0 9 * * *",
+    "timezone": "Asia/Tokyo",
+    "prompt": "/plaud-to-obsidian",
+    "cwd": "/home/user/notes"
+  }'
+```
+
+### Multi-node note
+
+Each CSM node owns its own schedules — there is no host-side aggregation yet. Create the schedule on whichever node should run it.
+
 ## MCP Server
 
 CSM includes an MCP (Model Context Protocol) server that lets Claude Code manage sessions directly.
@@ -233,6 +274,12 @@ Set `CSM_URL` to the address of your running CSM server (e.g. `http://lab:8321` 
 | `respawn_session` | Re-create a stopped session |
 | `get_logs` | Get session transcript |
 | `refresh_rc_url` | Re-scan tmux pane for Remote Control URL |
+| `list_schedules` | List all scheduled jobs |
+| `get_schedule` | Get a scheduled job by UUID |
+| `create_schedule` | Create a new scheduled job |
+| `update_schedule` | Update fields of a scheduled job |
+| `delete_schedule` | Delete a scheduled job |
+| `run_schedule` | Fire a scheduled job immediately |
 | `health` | Check CSM server status |
 
 ## Architecture

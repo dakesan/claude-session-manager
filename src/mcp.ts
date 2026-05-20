@@ -182,6 +182,111 @@ export function createMcpServer(): McpServer {
     },
   );
 
+  // --- list_schedules ---
+  server.tool(
+    "list_schedules",
+    "List all scheduled jobs managed by CSM. Each entry includes the cron expression, prompt, enabled flag, nextRun and lastRun.",
+    {},
+    async () => {
+      const { ok, data } = await csmFetch("/api/schedules");
+      if (!ok) return errorResult(`Failed to list schedules: ${JSON.stringify(data)}`);
+      return jsonResult(data);
+    },
+  );
+
+  // --- get_schedule ---
+  server.tool(
+    "get_schedule",
+    "Get details of a specific scheduled job by its UUID.",
+    { id: z.string().describe("Schedule UUID") },
+    async ({ id }) => {
+      const { ok, data, status } = await csmFetch(`/api/schedules/${id}`);
+      if (status === 404) return errorResult(`Schedule not found: ${id}`);
+      if (!ok) return errorResult(`Failed to get schedule: ${JSON.stringify(data)}`);
+      return jsonResult(data);
+    },
+  );
+
+  // --- create_schedule ---
+  server.tool(
+    "create_schedule",
+    "Create a new scheduled job. When the cron expression fires, CSM creates a regular interactive Claude session with the given prompt.",
+    {
+      name: z.string().describe("Display name for the schedule"),
+      cron: z.string().describe("5-field cron expression (e.g. '0 9 * * *' for daily 09:00)"),
+      prompt: z.string().describe("Prompt to send to the spawned Claude session"),
+      timezone: z.string().optional().describe("IANA timezone (default: Asia/Tokyo)"),
+      cwd: z.string().optional().describe("Working directory for the spawned session"),
+      model: z.string().optional().describe("Model override (e.g. 'sonnet' or 'claude-sonnet-4-6')"),
+      enabled: z.boolean().optional().describe("Whether the schedule fires (default: true)"),
+    },
+    async (input) => {
+      const { ok, data } = await csmFetch("/api/schedules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      if (!ok) return errorResult(`Failed to create schedule: ${JSON.stringify(data)}`);
+      return jsonResult(data);
+    },
+  );
+
+  // --- update_schedule ---
+  server.tool(
+    "update_schedule",
+    "Update fields of an existing scheduled job. Any omitted field is left unchanged.",
+    {
+      id: z.string().describe("Schedule UUID"),
+      name: z.string().optional(),
+      cron: z.string().optional(),
+      prompt: z.string().optional(),
+      timezone: z.string().optional(),
+      cwd: z.string().optional(),
+      model: z.string().optional(),
+      enabled: z.boolean().optional(),
+    },
+    async ({ id, ...patch }) => {
+      const { ok, data, status } = await csmFetch(`/api/schedules/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (status === 404) return errorResult(`Schedule not found: ${id}`);
+      if (!ok) return errorResult(`Failed to update schedule: ${JSON.stringify(data)}`);
+      return jsonResult(data);
+    },
+  );
+
+  // --- delete_schedule ---
+  server.tool(
+    "delete_schedule",
+    "Delete a scheduled job. Removes the cron task and the persisted definition.",
+    { id: z.string().describe("Schedule UUID") },
+    async ({ id }) => {
+      const { ok, data, status } = await csmFetch(`/api/schedules/${id}`, {
+        method: "DELETE",
+      });
+      if (status === 404) return errorResult(`Schedule not found: ${id}`);
+      if (!ok) return errorResult(`Failed to delete schedule: ${JSON.stringify(data)}`);
+      return jsonResult(data);
+    },
+  );
+
+  // --- run_schedule ---
+  server.tool(
+    "run_schedule",
+    "Fire a scheduled job immediately, ignoring its cron timing. Useful for testing or manual execution.",
+    { id: z.string().describe("Schedule UUID") },
+    async ({ id }) => {
+      const { ok, data, status } = await csmFetch(`/api/schedules/${id}/run`, {
+        method: "POST",
+      });
+      if (status === 404) return errorResult(`Schedule not found: ${id}`);
+      if (!ok) return errorResult(`Failed to run schedule: ${JSON.stringify(data)}`);
+      return jsonResult(data);
+    },
+  );
+
   // --- health ---
   server.tool(
     "health",
