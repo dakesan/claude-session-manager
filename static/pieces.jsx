@@ -175,6 +175,15 @@ function ProjectGroupedList({ sessions, selectedId, onSelect, onAction }) {
                 <div className="pgl-item-main">
                   <div className="pgl-item-row1">
                     <span className="pgl-item-name">{s.name}</span>
+                    {s.launchedBy && (
+                      <span
+                        className="session-origin-badge"
+                        data-origin={s.launchedBy}
+                        title={s.launchedBy === "csm" ? "Launched by CSM" : "Discovered (external)"}
+                      >
+                        {s.launchedBy === "csm" ? "CSM" : "EXT"}
+                      </span>
+                    )}
                     <span className="pgl-item-prompt">{s.prompt}</span>
                   </div>
                   <div className="pgl-item-row2">
@@ -264,6 +273,15 @@ function ProjectKanban({ sessions, selectedId, onSelect, onAction }) {
                 <div className="kanban-card-hdr">
                   <span className="dot" data-status={s.status} style={{ width: 7, height: 7 }} />
                   <span className="kanban-card-name">{s.name}</span>
+                  {s.launchedBy && (
+                    <span
+                      className="session-origin-badge"
+                      data-origin={s.launchedBy}
+                      title={s.launchedBy === "csm" ? "Launched by CSM" : "Discovered (external)"}
+                    >
+                      {s.launchedBy === "csm" ? "CSM" : "EXT"}
+                    </span>
+                  )}
                 </div>
                 <div className="kanban-card-prompt">{s.prompt}</div>
                 <div className="kanban-card-meta">

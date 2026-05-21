@@ -87,6 +87,8 @@ export interface Session {
   lastActivityAt?: string;
   /** Derived lifecycle category */
   lifecycleState?: LifecycleState;
+  /** How this session entered CSM's view: "csm" = spawned by CSM, "discovered" = found externally */
+  launchedBy?: "csm" | "discovered";
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -296,6 +298,12 @@ async function readCsmSessions(): Promise<Session[]> {
           // tmux session doesn't exist either
         }
       }
+      const launchedBy: "csm" | "discovered" | undefined =
+        data.launchedBy === "csm"
+          ? "csm"
+          : data.discovered === true
+            ? "discovered"
+            : undefined;
       sessions.push({
         sessionId: data.sessionId,
         shortId: shortId(data.sessionId),
@@ -310,6 +318,7 @@ async function readCsmSessions(): Promise<Session[]> {
         rcUrl: data.rcUrl,
         scheduleId: typeof data.scheduleId === "string" ? data.scheduleId : undefined,
         archivedAt: typeof data.archivedAt === "string" ? data.archivedAt : undefined,
+        launchedBy,
       });
     } catch {
       // skip
@@ -509,6 +518,7 @@ export async function listSessions(): Promise<Session[]> {
       existing.model = existing.model || s.model;
       existing.tmuxSession = existing.tmuxSession || s.tmuxSession;
       existing.rcUrl = existing.rcUrl || s.rcUrl;
+      existing.launchedBy = existing.launchedBy || s.launchedBy;
     } else {
       byId.set(s.sessionId, s);
     }
@@ -706,6 +716,7 @@ export async function createSession(
     rcUrl: rcUrl || undefined,
     model: undefined,
     scheduleId: scheduleId || undefined,
+    launchedBy: "csm" as const,
   };
 
   await writeFile(
@@ -728,6 +739,7 @@ export async function createSession(
     rcUrl,
     scheduleId: scheduleId || undefined,
     lifecycleState: "active",
+    launchedBy: "csm",
   };
 
   // Seed initial state for transition detection

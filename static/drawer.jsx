@@ -662,6 +662,15 @@ function Drawer({ session, onClose, onAction, onToast }) {
       <div className="panel-hdr">
         <span className="dot" data-status={s.status} />
         <span className="name">{s.name}</span>
+        {s.launchedBy && (
+          <span
+            className="session-origin-badge"
+            data-origin={s.launchedBy}
+            title={s.launchedBy === "csm" ? "Launched by CSM" : "Discovered (external)"}
+          >
+            {s.launchedBy === "csm" ? "CSM" : "EXT"}
+          </span>
+        )}
         <span className="id">{s.id}</span>
         <button className="btn btn-ghost btn-icon x" onClick={onClose} aria-label="Close"><Ico.x /></button>
       </div>

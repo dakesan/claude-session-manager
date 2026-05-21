@@ -72,6 +72,7 @@ function mapSession(s) {
     archivedAt: s.archivedAt || null,
     lastActivityAt: s.lastActivityAt || null,
     scheduleId: s.scheduleId || null,
+    launchedBy: s.launchedBy || null,
   };
 }
 
