@@ -253,6 +253,8 @@ button { font: inherit; color: inherit; }
 .dot[data-status="working"] { background: var(--st-working); box-shadow: 0 0 0 0 color-mix(in oklch, var(--st-working) 50%, transparent); animation: pulse 1.8s ease-out infinite; }
 .dot[data-status="waiting"] { background: var(--st-waiting); }
 .dot[data-status="stopped"] { background: transparent; border: 1.5px solid var(--st-stopped); width: 7px; height: 7px; }
+.dot[data-status="archived"] { background: var(--st-stopped); opacity: 0.55; }
+.dot[data-status="dead"] { background: transparent; border: 1.5px solid var(--st-error, var(--st-stopped)); opacity: 0.7; }
 /* Legacy dot statuses (kept for non-session UI) */
 .dot[data-status="idle"]    { background: var(--st-idle); }
 

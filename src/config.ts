@@ -38,6 +38,14 @@ export interface CsmConfig {
   session: {
     dangerouslySkipPermissions: boolean;
   };
+  lifecycle: {
+    /** Days after last jsonl activity to auto-archive a stopped session */
+    archiveAfterDays: number;
+    /** Days after last jsonl activity to auto-archive a schedule-derived session */
+    archiveAfterDaysScheduled: number;
+    /** How often the cleanup sweep runs */
+    cleanupIntervalMinutes: number;
+  };
   /** Remote CSM nodes to aggregate (only used when mode = "host") */
   remotes: RemoteNode[];
 }
@@ -88,6 +96,11 @@ export function loadConfig(): CsmConfig {
     session: {
       dangerouslySkipPermissions: true,
     },
+    lifecycle: {
+      archiveAfterDays: 7,
+      archiveAfterDaysScheduled: 3,
+      cleanupIntervalMinutes: 60,
+    },
     remotes: [],
   };
 
@@ -118,6 +131,25 @@ export function loadConfig(): CsmConfig {
       if (session) {
         if (typeof session.dangerously_skip_permissions === "boolean") {
           config.session.dangerouslySkipPermissions = session.dangerously_skip_permissions;
+        }
+      }
+
+      const lifecycle = toml.lifecycle as Record<string, unknown> | undefined;
+      if (lifecycle) {
+        if (typeof lifecycle.archive_after_days === "number" && lifecycle.archive_after_days >= 0) {
+          config.lifecycle.archiveAfterDays = lifecycle.archive_after_days;
+        }
+        if (
+          typeof lifecycle.archive_after_days_scheduled === "number" &&
+          lifecycle.archive_after_days_scheduled >= 0
+        ) {
+          config.lifecycle.archiveAfterDaysScheduled = lifecycle.archive_after_days_scheduled;
+        }
+        if (
+          typeof lifecycle.cleanup_interval_minutes === "number" &&
+          lifecycle.cleanup_interval_minutes >= 1
+        ) {
+          config.lifecycle.cleanupIntervalMinutes = lifecycle.cleanup_interval_minutes;
         }
       }
 

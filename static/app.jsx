@@ -78,15 +78,38 @@ function App() {
     return () => clearInterval(i);
   }, []);
 
+  // Counts are computed across the full unfiltered set so the header tabs can
+  // show, for example, how many archived sessions exist while the user is on
+  // the active tab.
   const counts = uM(() => {
-    const c = { all: sessions.length };
-    for (const s of sessions) c[s.status] = (c[s.status] || 0) + 1;
+    const c = { all: 0, working: 0, waiting: 0, stopped: 0, archived: 0, dead: 0 };
+    for (const s of sessions) {
+      const ls = s.lifecycleState || "active";
+      if (ls === "active") {
+        c.all += 1;
+        if (c[s.status] !== undefined) c[s.status] += 1;
+      } else if (ls === "archived") {
+        c.archived += 1;
+      } else if (ls === "dead") {
+        c.dead += 1;
+      }
+    }
     return c;
   }, [sessions]);
 
   const filtered = uM(() => {
-    let xs = sessions;
-    if (filter !== "all") xs = xs.filter((s) => s.status === filter);
+    // Filter has two roles: it selects a lifecycle slice (archived / dead) OR
+    // a status slice (working / waiting / stopped) within the active lifecycle.
+    let xs;
+    if (filter === "archived") {
+      xs = sessions.filter((s) => (s.lifecycleState || "active") === "archived");
+    } else if (filter === "dead") {
+      xs = sessions.filter((s) => (s.lifecycleState || "active") === "dead");
+    } else {
+      // active lifecycle (default)
+      xs = sessions.filter((s) => (s.lifecycleState || "active") === "active");
+      if (filter !== "all") xs = xs.filter((s) => s.status === filter);
+    }
     if (query.trim()) {
       const q = query.toLowerCase();
       xs = xs.filter((s) =>
@@ -118,6 +141,7 @@ function App() {
     try {
       if (kind === "stop" && window.CSM_API) await window.CSM_API.stopSession(s.sessionId || s.id, s.nodeUrl);
       if (kind === "respawn" && window.CSM_API) await window.CSM_API.respawnSession(s.sessionId || s.id, s.nodeUrl);
+      if (kind === "restore" && window.CSM_API) await window.CSM_API.restoreSession(s.sessionId || s.id, s.nodeUrl);
       if (kind === "rm" && window.CSM_API) await window.CSM_API.removeSession(s.sessionId || s.id, s.nodeUrl);
     } catch (e) {
       showToast(`Error: ${e.message}`);
@@ -129,11 +153,12 @@ function App() {
       return prev.map((x) => {
         if (x.id !== s.id) return x;
         if (kind === "stop") return { ...x, status: "stopped", stoppedReason: "user requested" };
-        if (kind === "respawn") return { ...x, status: "working", duration: 0, startedAt: Date.now(), stoppedReason: undefined, error: undefined };
+        if (kind === "respawn") return { ...x, status: "working", duration: 0, startedAt: Date.now(), stoppedReason: undefined, error: undefined, lifecycleState: "active", archivedAt: null };
+        if (kind === "restore") return { ...x, lifecycleState: "active", archivedAt: null };
         return x;
       });
     });
-    const verb = { stop: "Stopped", respawn: "Respawned", rm: "Removed", attach: "Attached to" }[kind] || kind;
+    const verb = { stop: "Stopped", respawn: "Respawned", restore: "Restored", rm: "Removed", attach: "Attached to" }[kind] || kind;
     showToast(`${verb} ${s.name} · ${s.id}`);
     if (kind === "rm" && selectedId === s.id) setSelectedId(null);
   }, [selectedId, showToast]);

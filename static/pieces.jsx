@@ -61,10 +61,12 @@ function Header({ theme, onToggleTheme, query, onQuery, onNew, onOpenPalette, te
   }, [host]);
 
   const filters = [
-    { id: "all",     label: "All" },
-    { id: "working", label: "Working" },
-    { id: "waiting", label: "Waiting" },
-    { id: "stopped", label: "Stopped" },
+    { id: "all",      label: "All" },
+    { id: "working",  label: "Working" },
+    { id: "waiting",  label: "Waiting" },
+    { id: "stopped",  label: "Stopped" },
+    { id: "archived", label: "Archived" },
+    { id: "dead",     label: "Dead" },
   ];
 
   return (
@@ -195,12 +197,29 @@ function ProjectGroupedList({ sessions, selectedId, onSelect, onAction }) {
                   <span className="pgl-item-id">{s.id}</span>
                 </div>
                 <span className="pgl-item-actions">
-                  {s.status === "working" || s.status === "waiting" ? (
-                    <button title="Stop" onClick={(e) => { e.stopPropagation(); onAction("stop", s); }}><Ico.stop /></button>
-                  ) : (
-                    <button title="Respawn" onClick={(e) => { e.stopPropagation(); onAction("respawn", s); }}><Ico.refresh /></button>
-                  )}
-                  <button title="Remove" onClick={(e) => { e.stopPropagation(); onAction("rm", s); }}><Ico.trash /></button>
+                  {(() => {
+                    const ls = s.lifecycleState || "active";
+                    // Dead sessions cannot be revived — only deletion makes sense.
+                    if (ls === "dead") {
+                      return <button title="Delete metadata" onClick={(e) => { e.stopPropagation(); onAction("rm", s); }}><Ico.trash /></button>;
+                    }
+                    // Archived: bring back to default list. Respawn requires a separate click after restore.
+                    if (ls === "archived") {
+                      return <>
+                        <button title="Restore" onClick={(e) => { e.stopPropagation(); onAction("restore", s); }}><Ico.refresh /></button>
+                        <button title="Remove" onClick={(e) => { e.stopPropagation(); onAction("rm", s); }}><Ico.trash /></button>
+                      </>;
+                    }
+                    // Active lifecycle — same Stop/Respawn behavior as before.
+                    return <>
+                      {s.status === "working" || s.status === "waiting" ? (
+                        <button title="Stop" onClick={(e) => { e.stopPropagation(); onAction("stop", s); }}><Ico.stop /></button>
+                      ) : (
+                        <button title="Respawn" onClick={(e) => { e.stopPropagation(); onAction("respawn", s); }}><Ico.refresh /></button>
+                      )}
+                      <button title="Remove" onClick={(e) => { e.stopPropagation(); onAction("rm", s); }}><Ico.trash /></button>
+                    </>;
+                  })()}
                 </span>
               </div>
             ))}

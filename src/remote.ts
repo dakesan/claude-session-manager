@@ -58,9 +58,11 @@ async function fetchWithTimeout(
 /** Fetch sessions from a single remote node */
 async function fetchRemoteSessions(
   node: RemoteNode,
+  lifecycle?: string,
 ): Promise<RemoteSession[]> {
   try {
-    const res = await fetchWithTimeout(`${node.url}/api/sessions`);
+    const qs = lifecycle ? `?lifecycle=${encodeURIComponent(lifecycle)}` : "";
+    const res = await fetchWithTimeout(`${node.url}/api/sessions${qs}`);
     if (!res.ok) return [];
     const sessions = (await res.json()) as Session[];
     return sessions.map((s) => ({
@@ -111,13 +113,15 @@ async function checkNodeHealth(
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /** Fetch sessions from all configured remote nodes in parallel */
-export async function fetchAllRemoteSessions(): Promise<RemoteSession[]> {
+export async function fetchAllRemoteSessions(
+  lifecycle?: string,
+): Promise<RemoteSession[]> {
   if (CONFIG.server.mode !== "host" || CONFIG.remotes.length === 0) {
     return [];
   }
 
   const results = await Promise.all(
-    CONFIG.remotes.map((node) => fetchRemoteSessions(node)),
+    CONFIG.remotes.map((node) => fetchRemoteSessions(node, lifecycle)),
   );
   return results.flat();
 }
@@ -163,6 +167,21 @@ export async function proxyRespawn(
 ): Promise<boolean> {
   try {
     const res = await fetchWithTimeout(`${nodeUrl}/api/sessions/${sessionId}/respawn`, {
+      method: "POST",
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Proxy a restore request to the correct remote node */
+export async function proxyRestore(
+  nodeUrl: string,
+  sessionId: string,
+): Promise<boolean> {
+  try {
+    const res = await fetchWithTimeout(`${nodeUrl}/api/sessions/${sessionId}/restore`, {
       method: "POST",
     });
     return res.ok;

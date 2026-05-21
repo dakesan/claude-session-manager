@@ -144,6 +144,7 @@ export async function fireSchedule(
       sessionName,
       schedule.cwd,
       schedule.model,
+      schedule.id,
     );
     record = {
       firedAt: firedAt.toISOString(),

@@ -17,6 +17,7 @@ import {
   writeFile,
   appendFile,
   mkdir,
+  stat,
   unlink,
 } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -40,6 +41,14 @@ export type SessionState =
   | "working"
   | "waiting"
   | "stopped";
+
+/**
+ * Lifecycle category derived from runtime state + jsonl presence + archive flag.
+ *   active   — visible in the default dashboard
+ *   archived — TTL exceeded; user must restore to use again
+ *   dead     — underlying jsonl transcript is gone; cannot be revived
+ */
+export type LifecycleState = "active" | "archived" | "dead";
 
 export interface Session {
   /** Session UUID */
@@ -70,6 +79,14 @@ export interface Session {
   tmuxSession?: string;
   /** Remote Control URL (e.g. https://claude.ai/code/session_...) */
   rcUrl?: string;
+  /** Schedule that spawned this session, if any */
+  scheduleId?: string;
+  /** ISO timestamp when the session was archived (sticky flag) */
+  archivedAt?: string;
+  /** ISO timestamp of the last jsonl activity (mtime); undefined if jsonl is gone */
+  lastActivityAt?: string;
+  /** Derived lifecycle category */
+  lifecycleState?: LifecycleState;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -291,6 +308,8 @@ async function readCsmSessions(): Promise<Session[]> {
         model: data.model,
         tmuxSession: data.tmuxSession,
         rcUrl: data.rcUrl,
+        scheduleId: typeof data.scheduleId === "string" ? data.scheduleId : undefined,
+        archivedAt: typeof data.archivedAt === "string" ? data.archivedAt : undefined,
       });
     } catch {
       // skip
@@ -382,7 +401,15 @@ async function enrichWithTitles(sessions: Session[]): Promise<void> {
 
       // Read first few lines to get ai-title and first user message
       try {
-        const content = await readFile(join(slugDir, f), "utf-8");
+        const jsonlPath = join(slugDir, f);
+        // Capture last activity time from file mtime — used by lifecycle classifier
+        try {
+          const st = await stat(jsonlPath);
+          session.lastActivityAt = st.mtime.toISOString();
+        } catch {
+          // stat failed — leave lastActivityAt undefined
+        }
+        const content = await readFile(jsonlPath, "utf-8");
         const lines = content.split("\n").filter(Boolean);
         session.projectSlug = slug;
 
@@ -417,6 +444,44 @@ async function enrichWithTitles(sessions: Session[]): Promise<void> {
       }
     }
   }
+}
+
+// ─── Lifecycle classification ───────────────────────────────────────────────
+
+/**
+ * Decide the lifecycle category for a session.
+ * Order of precedence:
+ *   1. working/waiting → always "active" (a live session is never archived/dead)
+ *   2. jsonl missing  → "dead" (cannot be respawned)
+ *   3. archivedAt set → "archived"
+ *   4. otherwise      → "active"
+ */
+function classifyLifecycle(s: Session): LifecycleState {
+  if (s.state === "working" || s.state === "waiting") return "active";
+  if (!s.lastActivityAt) return "dead";
+  if (s.archivedAt) return "archived";
+  return "active";
+}
+
+/** TTL (in ms) for a given session, based on whether it was scheduled or ad-hoc. */
+function ttlForSession(s: Session): number {
+  const days = s.scheduleId
+    ? CONFIG.lifecycle.archiveAfterDaysScheduled
+    : CONFIG.lifecycle.archiveAfterDays;
+  return days * 24 * 60 * 60 * 1000;
+}
+
+/**
+ * Returns true if a stopped session has crossed its archive TTL.
+ * Sessions without lastActivityAt (dead) or already-archived sessions return false.
+ */
+function shouldAutoArchive(s: Session, nowMs: number = Date.now()): boolean {
+  if (s.state !== "stopped") return false;
+  if (s.archivedAt) return false;
+  if (!s.lastActivityAt) return false;
+  const lastMs = new Date(s.lastActivityAt).getTime();
+  if (!Number.isFinite(lastMs)) return false;
+  return nowMs - lastMs > ttlForSession(s);
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -482,6 +547,11 @@ export async function listSessions(): Promise<Session[]> {
     return tb - ta;
   });
 
+  // Assign lifecycle category — depends on archivedAt + lastActivityAt set above
+  for (const s of sessions) {
+    s.lifecycleState = classifyLifecycle(s);
+  }
+
   // Detect and log state transitions (non-blocking)
   detectTransitions(sessions).catch(() => {});
 
@@ -539,6 +609,7 @@ export async function createSession(
   name?: string,
   cwd?: string,
   model?: string,
+  scheduleId?: string,
 ): Promise<Session> {
   const sessionId = randomUUID();
   const sid = shortId(sessionId);
@@ -634,6 +705,7 @@ export async function createSession(
     tmuxSession,
     rcUrl: rcUrl || undefined,
     model: undefined,
+    scheduleId: scheduleId || undefined,
   };
 
   await writeFile(
@@ -642,7 +714,7 @@ export async function createSession(
   );
 
   // Log session creation
-  await logLifecycle(sessionId, rcName, "created", `pid=${pid || "?"} tmux=${tmuxSession}`);
+  await logLifecycle(sessionId, rcName, "created", `pid=${pid || "?"} tmux=${tmuxSession}${scheduleId ? ` schedule=${scheduleId}` : ""}`);
 
   const session: Session = {
     sessionId,
@@ -654,6 +726,8 @@ export async function createSession(
     createdAt: meta.createdAt,
     pid,
     rcUrl,
+    scheduleId: scheduleId || undefined,
+    lifecycleState: "active",
   };
 
   // Seed initial state for transition detection
@@ -927,13 +1001,15 @@ export async function respawnSession(id: string): Promise<boolean> {
     // Capture RC URL (always overwrite — old URL is invalid after respawn)
     const rcUrl = await captureRcUrl(tmuxSession, 10);
 
-    // Update the CSM metadata file
+    // Update the CSM metadata file (also clears archivedAt — a respawned
+    // session is by definition active again)
     const csmFile = join(getCsmDir(), `${session.sessionId}.json`);
     if (existsSync(csmFile)) {
       const raw = JSON.parse(await readFile(csmFile, "utf-8"));
       if (pid) raw.pid = pid;
       raw.tmuxSession = tmuxSession;
       if (rcUrl) raw.rcUrl = rcUrl;
+      delete raw.archivedAt;
       await writeFile(csmFile, JSON.stringify(raw, null, 2));
     }
 
@@ -946,6 +1022,74 @@ export async function respawnSession(id: string): Promise<boolean> {
     await logLifecycle(session.sessionId, session.name, "respawn-failed", e instanceof Error ? e.message : String(e));
     return false;
   }
+}
+
+// ─── Lifecycle: archive sweep + restore ──────────────────────────────────────
+
+async function readCsmMeta(
+  sessionId: string,
+): Promise<Record<string, unknown> | null> {
+  const path = join(getCsmDir(), `${sessionId}.json`);
+  try {
+    return JSON.parse(await readFile(path, "utf-8")) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+async function writeCsmMeta(
+  sessionId: string,
+  meta: Record<string, unknown>,
+): Promise<void> {
+  await writeFile(
+    join(getCsmDir(), `${sessionId}.json`),
+    JSON.stringify(meta, null, 2),
+  );
+}
+
+/**
+ * Clear the archivedAt flag on a session so it returns to the default list.
+ * Does NOT respawn — the caller (or the user) can do that separately.
+ * Returns true if the metadata exists (regardless of whether a flag was
+ * actually cleared); false if the session is unknown.
+ */
+export async function restoreSession(id: string): Promise<boolean> {
+  const session = await getSession(id);
+  if (!session) return false;
+  const meta = await readCsmMeta(session.sessionId);
+  if (!meta) return false;
+  if (meta.archivedAt) {
+    delete meta.archivedAt;
+    await writeCsmMeta(session.sessionId, meta);
+    await logLifecycle(session.sessionId, session.name, "restored");
+  }
+  return true;
+}
+
+/**
+ * Walk all known sessions and set archivedAt on any that have crossed their
+ * lifecycle TTL. Returns the number of sessions newly archived in this pass.
+ * Working/waiting sessions and sessions with no jsonl (dead) are skipped.
+ */
+export async function runArchiveSweep(): Promise<{ archived: number }> {
+  const sessions = await listSessions();
+  const now = Date.now();
+  let archived = 0;
+  for (const s of sessions) {
+    if (!shouldAutoArchive(s, now)) continue;
+    const meta = await readCsmMeta(s.sessionId);
+    if (!meta) continue;
+    meta.archivedAt = new Date().toISOString();
+    await writeCsmMeta(s.sessionId, meta);
+    await logLifecycle(
+      s.sessionId,
+      s.name,
+      "archived",
+      `auto sweep (lastActivity=${s.lastActivityAt})`,
+    );
+    archived++;
+  }
+  return { archived };
 }
 
 export async function removeSession(id: string): Promise<boolean> {

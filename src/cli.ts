@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { app } from "./server.js";
 import { CONFIG } from "./config.js";
 import { initScheduler } from "./scheduler.js";
+import * as cli from "./claude-cli.js";
 
 // ---------------------------------------------------------------------------
 // Subcommand routing
@@ -253,4 +254,26 @@ server.listen(port, host, () => {
   void initScheduler().catch((e) => {
     console.error("Failed to initialize scheduler:", e);
   });
+
+  // Periodic archive sweep: stopped sessions older than the configured TTL
+  // get the archivedAt flag set so the dashboard hides them from the default list.
+  const sweepMs = CONFIG.lifecycle.cleanupIntervalMinutes * 60 * 1000;
+  const runSweep = async () => {
+    try {
+      const result = await cli.runArchiveSweep();
+      if (result.archived > 0) {
+        console.log(`[lifecycle] auto-archived ${result.archived} session(s)`);
+      }
+    } catch (e) {
+      console.error("[lifecycle] sweep failed:", e);
+    }
+  };
+  // Run once on startup, then on the configured interval
+  void runSweep();
+  setInterval(runSweep, sweepMs);
+  console.log(
+    `  Archive sweep every ${CONFIG.lifecycle.cleanupIntervalMinutes}min ` +
+      `(TTL: ${CONFIG.lifecycle.archiveAfterDays}d normal / ` +
+      `${CONFIG.lifecycle.archiveAfterDaysScheduled}d scheduled)`,
+  );
 });

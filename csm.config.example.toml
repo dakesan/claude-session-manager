@@ -26,6 +26,16 @@ port = 8321
 # Flags passed to every `claude` invocation
 dangerously_skip_permissions = true
 
+[lifecycle]
+# Auto-archive a stopped session this many days after its last jsonl activity.
+# archive_after_days = 7
+
+# Same, but for sessions created by a schedule (typically shorter to limit clutter).
+# archive_after_days_scheduled = 3
+
+# How often the archive sweep runs.
+# cleanup_interval_minutes = 60
+
 # ─── Multi-node configuration (host mode only) ──────────────────────────────
 # Add [[remotes]] entries for each CSM node to aggregate.
 # Each node must be running CSM and accessible from this host.

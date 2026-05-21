@@ -49,10 +49,16 @@ export function createMcpServer(): McpServer {
   // --- list_sessions ---
   server.tool(
     "list_sessions",
-    "List all Claude Code sessions managed by CSM. Returns session ID, name, status, prompt, and Remote Control URL for each session.",
-    {},
-    async () => {
-      const { ok, data } = await csmFetch("/api/sessions");
+    "List Claude Code sessions managed by CSM. By default returns only active sessions; pass lifecycle='archived' or 'dead' to inspect retired sessions, or 'all' for everything.",
+    {
+      lifecycle: z
+        .enum(["active", "archived", "dead", "all"])
+        .optional()
+        .describe("Lifecycle filter (default: active)"),
+    },
+    async ({ lifecycle }) => {
+      const qs = lifecycle ? `?lifecycle=${encodeURIComponent(lifecycle)}` : "";
+      const { ok, data } = await csmFetch(`/api/sessions${qs}`);
       if (!ok) return errorResult(`Failed to list sessions: ${JSON.stringify(data)}`);
       return jsonResult(data);
     },
@@ -135,6 +141,21 @@ export function createMcpServer(): McpServer {
         method: "POST",
       });
       if (!ok) return errorResult(`Failed to respawn session: ${JSON.stringify(data)}`);
+      return jsonResult(data);
+    },
+  );
+
+  // --- restore_session ---
+  server.tool(
+    "restore_session",
+    "Clear the archived flag on a session so it returns to the default list. Does not respawn — call respawn_session separately if needed.",
+    { id: z.string().describe("Session short ID or full UUID") },
+    async ({ id }) => {
+      const { ok, data, status } = await csmFetch(`/api/sessions/${id}/restore`, {
+        method: "POST",
+      });
+      if (status === 404) return errorResult(`Session not found: ${id}`);
+      if (!ok) return errorResult(`Failed to restore session: ${JSON.stringify(data)}`);
       return jsonResult(data);
     },
   );

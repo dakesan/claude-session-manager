@@ -38,7 +38,8 @@ function projectDisplayName(slug) {
 
 function mapSession(s) {
   // Backend returns: sessionId, shortId, name, state, prompt, cwd,
-  //                  createdAt, pid, projectSlug, gitBranch, model, version
+  //                  createdAt, pid, projectSlug, gitBranch, model, version,
+  //                  lifecycleState, archivedAt, lastActivityAt, scheduleId
   const startedAt = s.createdAt ? new Date(s.createdAt).getTime() : Date.now();
   const duration = Math.floor((Date.now() - startedAt) / 1000);
 
@@ -67,13 +68,18 @@ function mapSession(s) {
     version: s.version || null,
     node: s.node || null,
     nodeUrl: s.nodeUrl || null,
+    lifecycleState: s.lifecycleState || "active",
+    archivedAt: s.archivedAt || null,
+    lastActivityAt: s.lastActivityAt || null,
+    scheduleId: s.scheduleId || null,
   };
 }
 
 // ─── Fetch sessions from API ─────────────────────────────────────────────────
-async function fetchSessions() {
+async function fetchSessions(lifecycle = "all") {
   try {
-    const res = await fetch(`${API}/sessions`);
+    const qs = lifecycle ? `?lifecycle=${encodeURIComponent(lifecycle)}` : "";
+    const res = await fetch(`${API}/sessions${qs}`);
     if (!res.ok) return [];
     const data = await res.json();
     return data.map(mapSession);
@@ -139,6 +145,11 @@ window.CSM_API = {
 
   async respawnSession(id, nodeUrl) {
     const res = await fetch(`${API}/sessions/${id}/respawn${nodeQuery(nodeUrl)}`, { method: "POST" });
+    if (!res.ok) throw new Error((await res.json()).error || res.statusText);
+  },
+
+  async restoreSession(id, nodeUrl) {
+    const res = await fetch(`${API}/sessions/${id}/restore${nodeQuery(nodeUrl)}`, { method: "POST" });
     if (!res.ok) throw new Error((await res.json()).error || res.statusText);
   },
 

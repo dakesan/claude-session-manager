@@ -492,8 +492,12 @@ function Drawer({ session, onClose, onAction, toast }) {
   if (!session) return null;
   const s = session;
 
-  const canStop = s.status === "working" || s.status === "waiting";
-  const canRespawn = s.status === "stopped";
+  const lifecycle = s.lifecycleState || "active";
+  const isDead = lifecycle === "dead";
+  const isArchived = lifecycle === "archived";
+  const canStop = !isDead && !isArchived && (s.status === "working" || s.status === "waiting");
+  const canRespawn = !isDead && !isArchived && s.status === "stopped";
+  const canRestore = isArchived;
 
   const menuItems = [
     { label: "Copy session ID", icon: <Ico.copy />, onClick: () => navigator.clipboard?.writeText(s.sessionId || s.id) },
@@ -521,6 +525,8 @@ function Drawer({ session, onClose, onAction, toast }) {
       <div className="panel-actions">
         {canStop && <button className="btn btn-danger" onClick={() => onAction("stop", s)}><Ico.stop /> Stop</button>}
         {canRespawn && <button className="btn" onClick={() => onAction("respawn", s)}><Ico.refresh /> Respawn</button>}
+        {canRestore && <button className="btn" onClick={() => onAction("restore", s)}><Ico.refresh /> Restore</button>}
+        {isDead && <span className="btn btn-ghost" style={{ pointerEvents: "none", opacity: 0.7 }}>Cannot revive — transcript missing</span>}
         <a className="btn" href={s.rc || "https://claude.ai/code"} target="_blank" rel="noopener"><Ico.link /> Remote Control <Ico.ext /></a>
         <div style={{ flex: 1 }} />
         <button className="btn btn-ghost"><Ico.branch /> {s.branch || "no branch"}</button>

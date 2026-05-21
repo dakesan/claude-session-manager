@@ -33,21 +33,47 @@ app.get("/api/health", (c) => {
   });
 });
 
+type LifecycleFilter = "active" | "archived" | "dead" | "all";
+
+function parseLifecycleFilter(raw: string | undefined): LifecycleFilter {
+  if (raw === "archived" || raw === "dead" || raw === "all") return raw;
+  return "active";
+}
+
+function matchesLifecycle(
+  session: { lifecycleState?: string },
+  filter: LifecycleFilter,
+): boolean {
+  if (filter === "all") return true;
+  // Treat missing lifecycleState as "active" (back-compat with remotes that
+  // haven't been upgraded yet).
+  const state = session.lifecycleState || "active";
+  return state === filter;
+}
+
 app.get("/api/sessions", async (c) => {
+  const lifecycle = parseLifecycleFilter(c.req.query("lifecycle"));
+
   const [localSessions, remoteSessions] = await Promise.all([
     cli.listSessions(),
-    remote.fetchAllRemoteSessions(),
+    remote.fetchAllRemoteSessions(lifecycle),
   ]);
 
   // Tag local sessions with node info
   const localHostname = hostname();
-  const tagged = localSessions.map((s) => ({
-    ...s,
-    node: localHostname,
-    nodeUrl: null, // null = local
-  }));
+  const tagged = localSessions
+    .filter((s) => matchesLifecycle(s, lifecycle))
+    .map((s) => ({
+      ...s,
+      node: localHostname,
+      nodeUrl: null, // null = local
+    }));
 
-  return c.json([...tagged, ...remoteSessions]);
+  // Remote sessions are pre-filtered by the remote node, but re-filter here in
+  // case a remote node returned everything (older versions).
+  const filteredRemote = remoteSessions.filter((s) => matchesLifecycle(s, lifecycle));
+
+  return c.json([...tagged, ...filteredRemote]);
 });
 
 app.get("/api/sessions/:id", async (c) => {
@@ -127,6 +153,21 @@ app.post("/api/sessions/:id/respawn", async (c) => {
   const ok = await cli.respawnSession(id);
   if (!ok) return c.json({ error: `Failed to respawn ${id}` }, 500);
   return c.json({ status: "respawned", shortId: id });
+});
+
+app.post("/api/sessions/:id/restore", async (c) => {
+  const id = c.req.param("id");
+  const nodeUrl = c.req.query("nodeUrl");
+
+  if (nodeUrl) {
+    const ok = await remote.proxyRestore(nodeUrl, id);
+    if (!ok) return c.json({ error: `Failed to restore ${id} on remote node` }, 502);
+    return c.json({ status: "restored", shortId: id });
+  }
+
+  const ok = await cli.restoreSession(id);
+  if (!ok) return c.json({ error: `Failed to restore ${id}` }, 404);
+  return c.json({ status: "restored", shortId: id });
 });
 
 app.delete("/api/sessions/:id", async (c) => {
