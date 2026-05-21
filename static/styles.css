@@ -913,8 +913,101 @@ button { font: inherit; color: inherit; }
   color: var(--text-muted);
 }
 .transcript-turn-text {
-  white-space: pre-wrap;
   word-break: break-word;
+}
+.transcript-turn-text .md > *:first-child { margin-top: 0; }
+.transcript-turn-text .md > *:last-child  { margin-bottom: 0; }
+
+/* Markdown rendering */
+.md {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text);
+}
+.md p {
+  margin: 0 0 8px 0;
+}
+.md h1, .md h2, .md h3, .md h4, .md h5, .md h6 {
+  margin: 14px 0 6px 0;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.3;
+}
+.md h1 { font-size: 17px; border-bottom: .5px solid var(--border); padding-bottom: 4px; }
+.md h2 { font-size: 15px; }
+.md h3 { font-size: 14px; }
+.md h4, .md h5, .md h6 { font-size: 13px; }
+.md a {
+  color: var(--st-idle);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.md a:hover { text-decoration-thickness: 2px; }
+.md ul, .md ol {
+  margin: 0 0 8px 0;
+  padding-left: 22px;
+}
+.md li { margin: 2px 0; }
+.md li > p { margin: 0; }
+.md blockquote {
+  margin: 6px 0 8px 0;
+  padding: 4px 10px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--surface-2) 60%, transparent);
+  border-radius: 0 4px 4px 0;
+}
+.md code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  border: .5px solid var(--border);
+  color: var(--text);
+}
+.md pre {
+  margin: 6px 0 8px 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--bg-elev);
+  border: .5px solid var(--border);
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.md pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  white-space: pre;
+}
+.md table {
+  border-collapse: collapse;
+  margin: 6px 0 8px 0;
+  font-size: 12px;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.md th, .md td {
+  border: .5px solid var(--border);
+  padding: 4px 8px;
+  text-align: left;
+}
+.md th {
+  background: var(--surface-2);
+  font-weight: 600;
+}
+.md hr {
+  border: 0;
+  border-top: .5px solid var(--border);
+  margin: 10px 0;
+}
+.md img {
+  max-width: 100%;
+  border-radius: 4px;
 }
 .transcript-turn-tools {
   display: flex;

@@ -448,6 +448,34 @@ function TranscriptComposer({ session, onSent, onError }) {
 
 const IMG_EXTS = /\.(png|jpe?g|gif|webp|svg)$/i;
 
+// Configure marked once on load (idempotent). GFM + line breaks + headerless.
+if (window.marked && !window.__csmMarkedConfigured) {
+  window.marked.setOptions({
+    gfm: true,
+    breaks: true,
+    headerIds: false,
+    mangle: false,
+  });
+  window.__csmMarkedConfigured = true;
+}
+
+function renderMarkdown(text) {
+  if (!text) return "";
+  if (!window.marked || !window.DOMPurify) {
+    // Fallback: render as preformatted text if libs failed to load.
+    return text.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  }
+  const html = window.marked.parse(text);
+  return window.DOMPurify.sanitize(html, {
+    ADD_ATTR: ["target", "rel"],
+  });
+}
+
+function Markdown({ text }) {
+  const html = useM(() => renderMarkdown(text), [text]);
+  return <div className="md" dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
 function TranscriptAttachment({ path, nodeUrl }) {
   const name = path.split("/").pop() || path;
   const isImage = IMG_EXTS.test(path);
@@ -475,7 +503,11 @@ function TranscriptTurn({ turn, nodeUrl }) {
         {turn.role}
         <span className="transcript-turn-time">{fmtClock(turn.t)}</span>
       </div>
-      {turn.text && <div className="transcript-turn-text">{turn.text}</div>}
+      {turn.text && (
+        <div className="transcript-turn-text">
+          <Markdown text={turn.text} />
+        </div>
+      )}
       {turn.attachments && turn.attachments.length > 0 && (
         <div className="transcript-turn-attachments">
           {turn.attachments.map((p) => (
