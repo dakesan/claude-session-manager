@@ -3,7 +3,9 @@
  */
 
 import { readFile, readdir, stat } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { createReadStream } from "node:fs";
+import { Readable } from "node:stream";
+import { dirname, join, resolve, basename, extname } from "node:path";
 import { homedir, hostname } from "node:os";
 import { fileURLToPath } from "node:url";
 
@@ -217,17 +219,30 @@ app.post("/api/sessions/:id/message", async (c) => {
   const nodeUrl = c.req.query("nodeUrl");
 
   const body = await c.req
-    .json<{ prompt?: string }>()
-    .catch(() => ({} as { prompt?: string }));
+    .json<{ prompt?: string; attachments?: string[] }>()
+    .catch(() => ({} as { prompt?: string; attachments?: string[] }));
   const prompt = (body.prompt || "").trim();
-  if (!prompt) return c.json({ error: "prompt is required" }, 400);
+  const attachments = Array.isArray(body.attachments)
+    ? body.attachments.filter((p): p is string => typeof p === "string" && p.length > 0)
+    : [];
+  if (!prompt && attachments.length === 0) {
+    return c.json({ error: "prompt or attachments are required" }, 400);
+  }
+
+  // Build the wire prompt by appending the [添付ファイル] block. The protocol
+  // injected at session spawn time teaches claude how to interpret this.
+  const wirePrompt = attachments.length === 0
+    ? prompt
+    : `${prompt || "添付ファイルを確認してください"}\n\n[添付ファイル]\n${attachments
+        .map((p) => `  - ${p}`)
+        .join("\n")}`;
 
   if (nodeUrl) {
-    const r = await remote.proxyMessage(nodeUrl, id, prompt);
+    const r = await remote.proxyMessage(nodeUrl, id, wirePrompt);
     return c.json(r.body, r.status as 200 | 400 | 404 | 409 | 502);
   }
 
-  const result = await cli.sendMessage(id, prompt);
+  const result = await cli.sendMessage(id, wirePrompt);
   if (result.ok) return c.json({ status: "sent", shortId: id });
 
   if (result.reason === "not_found") return c.json({ error: "Session not found" }, 404);
@@ -238,6 +253,41 @@ app.post("/api/sessions/:id/message", async (c) => {
     return c.json({ error: "No tmux pane found for session" }, 409);
   }
   return c.json({ error: result.detail || "tmux send failed" }, 500);
+});
+
+app.post("/api/sessions/:id/upload", async (c) => {
+  const id = c.req.param("id");
+  const nodeUrl = c.req.query("nodeUrl");
+
+  if (nodeUrl) {
+    const r = await remote.proxyUpload(nodeUrl, id, c.req.raw);
+    return c.json(r.body, r.status as 200 | 400 | 404 | 502);
+  }
+
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.parseBody({ all: true });
+  } catch (e) {
+    return c.json(
+      { error: "Failed to parse multipart body", detail: e instanceof Error ? e.message : String(e) },
+      400,
+    );
+  }
+
+  // The form field name is "files" (single or multiple). Accept either.
+  const raw = body["files"] ?? body["file"];
+  const list: File[] = [];
+  if (Array.isArray(raw)) {
+    for (const v of raw) if (v instanceof File) list.push(v);
+  } else if (raw instanceof File) {
+    list.push(raw);
+  }
+
+  const result = await cli.saveUploads(id, list);
+  if (result.ok) return c.json({ files: result.files });
+  if (result.reason === "not_found") return c.json({ error: "Session not found" }, 404);
+  if (result.reason === "no_files") return c.json({ error: "No files were uploaded" }, 400);
+  return c.json({ error: result.detail || "Failed to save uploads" }, 500);
 });
 
 app.get("/api/sessions/:id/rc-url", async (c) => {
@@ -264,6 +314,79 @@ app.get("/api/nodes", async (c) => {
 app.get("/api/roster", async (c) => {
   const roster = await cli.getRoster();
   return c.json(roster);
+});
+
+// --- File serving ---
+// Serve a file referenced by absolute path (uploads or assistant output).
+// Used by the chat UI to render images inline and offer downloads.
+const MIME: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".flac": "audio/flac",
+  ".mp4": "video/mp4",
+  ".pdf": "application/pdf",
+  ".csv": "text/csv; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".zip": "application/zip",
+};
+
+const INLINE_EXTENSIONS = new Set([
+  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",
+  ".pdf", ".txt", ".csv", ".json",
+]);
+
+app.get("/api/files", async (c) => {
+  const rawPath = c.req.query("path");
+  const nodeUrl = c.req.query("nodeUrl");
+
+  if (!rawPath) return c.json({ error: "path is required" }, 400);
+
+  if (nodeUrl) {
+    const r = await remote.proxyFile(nodeUrl, rawPath);
+    if (!r) return c.json({ error: "Remote node unreachable" }, 502);
+    return r;
+  }
+
+  // Anti-traversal: reject relative segments before resolving.
+  if (!rawPath.startsWith("/") || rawPath.includes("..")) {
+    return c.json({ error: "Absolute path required (no '..')" }, 400);
+  }
+
+  const abs = resolve(rawPath);
+  let st;
+  try {
+    st = await stat(abs);
+  } catch {
+    return c.json({ error: "File not found" }, 404);
+  }
+  if (!st.isFile()) {
+    return c.json({ error: "Not a regular file" }, 400);
+  }
+
+  const ext = extname(abs).toLowerCase();
+  const type = MIME[ext] || "application/octet-stream";
+  const disposition = INLINE_EXTENSIONS.has(ext) ? "inline" : "attachment";
+  const filename = basename(abs).replace(/"/g, "");
+
+  const nodeStream = createReadStream(abs);
+  const webStream = Readable.toWeb(nodeStream) as unknown as ReadableStream;
+
+  return new Response(webStream, {
+    status: 200,
+    headers: {
+      "Content-Type": type,
+      "Content-Length": String(st.size),
+      "Content-Disposition": `${disposition}; filename="${filename}"`,
+      "Cache-Control": "private, max-age=60",
+    },
+  });
 });
 
 // --- Models ---

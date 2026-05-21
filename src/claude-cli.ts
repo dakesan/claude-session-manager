@@ -26,6 +26,8 @@ import { join, basename } from "node:path";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { CONFIG } from "./config.js";
+import { CSM_FILE_PROTOCOL } from "./prompts.js";
+import { extractFilePaths, stripFilePaths } from "./file-extract.js";
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -634,6 +636,8 @@ export async function createSession(
     sessionId,
     "--remote-control",
     rcName,
+    "--append-system-prompt",
+    CSM_FILE_PROTOCOL,
   ];
   if (model) {
     claudeArgs.push("--model", model);
@@ -1203,6 +1207,8 @@ export interface TranscriptTurn {
   text?: string;
   /** Tool invocations from the assistant */
   tools?: TranscriptTool[];
+  /** File paths surfaced via the CSM file protocol (assistant turns only) */
+  attachments?: string[];
   /** Epoch ms */
   t: number;
 }
@@ -1297,11 +1303,14 @@ export async function getTranscript(id: string): Promise<TranscriptTurn[]> {
             summary: summarizeToolInput((b.name as string) || "", b.input),
           }));
         if (!text && tools.length === 0) continue;
+        const attachments = text ? extractFilePaths(text) : [];
+        const cleaned = text ? stripFilePaths(text) : "";
         turns.push({
           uuid,
           role: "assistant",
-          text: text || undefined,
+          text: cleaned || undefined,
           tools: tools.length ? tools : undefined,
+          attachments: attachments.length ? attachments : undefined,
           t,
         });
       }
@@ -1369,4 +1378,89 @@ export async function sendMessage(
       detail: e instanceof Error ? e.message : String(e),
     };
   }
+}
+
+// ─── Uploads ─────────────────────────────────────────────────────────────────
+
+/**
+ * Directory where files uploaded via the web UI are staged. The session-id
+ * subdirectory is created lazily on first upload. Paths under this prefix are
+ * considered safe to read back via the download endpoint without further
+ * authorization checks.
+ */
+export const UPLOAD_ROOT = "/tmp/csm-uploads";
+
+function sanitizeUploadName(name: string): string {
+  // Replace anything that isn't an alnum/dot/dash/underscore with "_".
+  const base = name.replace(/[^a-zA-Z0-9._-]/g, "_");
+  // Avoid leading dots so the file is visible in `ls` and `Read`.
+  return base.replace(/^\.+/, "") || "file";
+}
+
+export interface UploadResult {
+  ok: true;
+  files: Array<{ name: string; path: string; size: number; type?: string }>;
+}
+
+export interface UploadFailure {
+  ok: false;
+  reason: "not_found" | "no_files" | "write_failed";
+  detail?: string;
+}
+
+/**
+ * Persist uploaded files to /tmp/csm-uploads/<sessionId>/ and return their
+ * absolute paths so they can be referenced from a follow-up message.
+ */
+export async function saveUploads(
+  id: string,
+  files: File[],
+): Promise<UploadResult | UploadFailure> {
+  const session = await getSession(id);
+  if (!session) return { ok: false, reason: "not_found" };
+  if (files.length === 0) return { ok: false, reason: "no_files" };
+
+  const dir = join(UPLOAD_ROOT, session.sessionId);
+  if (!existsSync(dir)) {
+    try {
+      await mkdir(dir, { recursive: true });
+    } catch (e) {
+      return {
+        ok: false,
+        reason: "write_failed",
+        detail: e instanceof Error ? e.message : String(e),
+      };
+    }
+  }
+
+  const saved: UploadResult["files"] = [];
+  for (const file of files) {
+    const ts = Date.now();
+    const safe = sanitizeUploadName(file.name || "file");
+    const path = join(dir, `${ts}_${safe}`);
+    try {
+      const buf = Buffer.from(await file.arrayBuffer());
+      await writeFile(path, buf);
+      saved.push({
+        name: file.name || safe,
+        path,
+        size: buf.length,
+        type: file.type || undefined,
+      });
+    } catch (e) {
+      return {
+        ok: false,
+        reason: "write_failed",
+        detail: e instanceof Error ? e.message : String(e),
+      };
+    }
+  }
+
+  await logLifecycle(
+    session.sessionId,
+    session.name,
+    "upload",
+    `count=${saved.length} bytes=${saved.reduce((n, f) => n + f.size, 0)}`,
+  );
+  return { ok: true, files: saved };
 }

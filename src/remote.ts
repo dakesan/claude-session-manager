@@ -282,6 +282,73 @@ export async function proxyMessage(
   }
 }
 
+/**
+ * Proxy a multipart upload to the correct remote node. The original request
+ * body is streamed through unchanged so we do not have to materialize the
+ * file payload in memory on the host side.
+ */
+export async function proxyUpload(
+  nodeUrl: string,
+  sessionId: string,
+  req: Request,
+): Promise<{ ok: boolean; status: number; body: unknown }> {
+  try {
+    const headers = new Headers();
+    const ct = req.headers.get("content-type");
+    if (ct) headers.set("content-type", ct);
+    const cl = req.headers.get("content-length");
+    if (cl) headers.set("content-length", cl);
+
+    const res = await fetch(`${nodeUrl}/api/sessions/${sessionId}/upload`, {
+      method: "POST",
+      headers,
+      body: req.body,
+      // Node's undici requires this when streaming a request body.
+      duplex: "half",
+    } as RequestInit & { duplex: "half" });
+    const body = await res.json().catch(() => ({}));
+    return { ok: res.ok, status: res.status, body };
+  } catch (e) {
+    return {
+      ok: false,
+      status: 502,
+      body: { error: e instanceof Error ? e.message : String(e) },
+    };
+  }
+}
+
+/**
+ * Stream a file from a remote node. The Response object is forwarded
+ * verbatim (status, headers, body) so the browser sees the same content
+ * type and disposition the remote produced.
+ */
+export async function proxyFile(
+  nodeUrl: string,
+  path: string,
+): Promise<Response | null> {
+  try {
+    const url = `${nodeUrl}/api/files?path=${encodeURIComponent(path)}`;
+    const res = await fetch(url);
+    // Re-wrap so we drop hop-by-hop headers and keep the relevant ones.
+    const headers = new Headers();
+    for (const k of [
+      "content-type",
+      "content-length",
+      "content-disposition",
+      "cache-control",
+    ]) {
+      const v = res.headers.get(k);
+      if (v) headers.set(k, v);
+    }
+    return new Response(res.body, {
+      status: res.status,
+      headers,
+    });
+  } catch {
+    return null;
+  }
+}
+
 /** Proxy a directory-browse request to a remote node */
 export async function proxyBrowse(
   nodeUrl: string,
