@@ -60,7 +60,7 @@ function App() {
     const i = setInterval(poll, 3000);
     return () => clearInterval(i);
   }, []);
-  const [filter, setFilter] = uS("all");
+  const [filter, setFilter] = uS("active");
   const [view, setView] = uS(t.view);
   const [modalOpen, setModalOpen] = uS(false);
   const [terminalOpen, setTerminalOpen] = uS(false);
@@ -82,12 +82,13 @@ function App() {
   // show, for example, how many archived sessions exist while the user is on
   // the active tab.
   const counts = uM(() => {
-    const c = { all: 0, working: 0, waiting: 0, stopped: 0, archived: 0, dead: 0 };
+    const c = { all: 0, active: 0, working: 0, waiting: 0, stopped: 0, archived: 0, dead: 0 };
     for (const s of sessions) {
       const ls = s.lifecycleState || "active";
       if (ls === "active") {
         c.all += 1;
         if (c[s.status] !== undefined) c[s.status] += 1;
+        if (s.status === "working" || s.status === "waiting") c.active += 1;
       } else if (ls === "archived") {
         c.archived += 1;
       } else if (ls === "dead") {
@@ -108,7 +109,11 @@ function App() {
     } else {
       // active lifecycle (default)
       xs = sessions.filter((s) => (s.lifecycleState || "active") === "active");
-      if (filter !== "all") xs = xs.filter((s) => s.status === filter);
+      if (filter === "active") {
+        xs = xs.filter((s) => s.status === "working" || s.status === "waiting");
+      } else if (filter !== "all") {
+        xs = xs.filter((s) => s.status === filter);
+      }
     }
     if (query.trim()) {
       const q = query.toLowerCase();
