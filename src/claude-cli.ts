@@ -633,18 +633,18 @@ export async function createSession(
   const tmuxSession = `csm-${sid}`;
   const rcName = name || `csm-${sid}`;
 
-  // Build the claude command to run inside tmux
+  // Build the claude command to run inside tmux.
+  // Use `--flag=value` form for any value that may start with '-' (e.g. a
+  // user-supplied session name "-snakemake-"): otherwise claude's argv
+  // parser treats the leading dash as a new flag and aborts startup.
   const claudeArgs = [
     CLAUDE_BIN,
-    "--session-id",
-    sessionId,
-    "--remote-control",
-    rcName,
-    "--append-system-prompt",
-    CSM_FILE_PROTOCOL,
+    `--session-id=${sessionId}`,
+    `--remote-control=${rcName}`,
+    `--append-system-prompt=${CSM_FILE_PROTOCOL}`,
   ];
   if (model) {
-    claudeArgs.push("--model", model);
+    claudeArgs.push(`--model=${model}`);
   }
   if (CONFIG.session.dangerouslySkipPermissions) {
     claudeArgs.push("--dangerously-skip-permissions");
@@ -1002,14 +1002,13 @@ export async function respawnSession(id: string): Promise<boolean> {
   // Build the claude command with --resume to restore the exact session.
   // Re-inject the CSM file protocol so respawned sessions keep the same
   // attachment conventions they were originally launched with.
+  // Use `--flag=value` form so session names beginning with '-' don't get
+  // misinterpreted as flags by claude's argv parser (see createSession).
   const resumeArgs = [
     CLAUDE_BIN,
-    "--resume",
-    session.sessionId,
-    "--remote-control",
-    rcName,
-    "--append-system-prompt",
-    CSM_FILE_PROTOCOL,
+    `--resume=${session.sessionId}`,
+    `--remote-control=${rcName}`,
+    `--append-system-prompt=${CSM_FILE_PROTOCOL}`,
   ];
   if (CONFIG.session.dangerouslySkipPermissions) {
     resumeArgs.push("--dangerously-skip-permissions");
