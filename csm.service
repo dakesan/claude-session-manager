@@ -8,6 +8,12 @@ WorkingDirectory=/home/oodake/ghq/github.com/dakesan/claude-session-manager
 ExecStart=/home/oodake/.local/share/mise/installs/node/24.11.1/bin/node dist/cli.js
 Restart=on-failure
 RestartSec=5
+# Only kill the node MainPID on stop/restart. Without this, systemd's
+# default KillMode=control-group also kills any tmux server CSM happened
+# to spawn (it lands in this unit's cgroup), wiping every csm-* session
+# on every deploy. KillMode=process leaves tmux — and the live sessions
+# inside it — untouched across restarts.
+KillMode=process
 Environment=NODE_ENV=production
 Environment=HOST=0.0.0.0
 Environment=PORT=8321
