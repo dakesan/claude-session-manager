@@ -347,6 +347,30 @@ function TranscriptComposer({ session, onSent, onError }) {
     uploadFiles(e.dataTransfer.files);
   };
 
+  const onPaste = (e) => {
+    if (!supportsAttachments || stopped) return;
+    const items = e.clipboardData?.items;
+    if (!items || items.length === 0) return;
+    const files = [];
+    for (const item of items) {
+      if (item.kind !== "file") continue;
+      const blob = item.getAsFile();
+      if (!blob) continue;
+      // Clipboard images usually arrive with no name (just type=image/png).
+      // Give them a stable, descriptive default so they land sensibly.
+      if (!blob.name || blob.name === "image.png") {
+        const ext = (blob.type.split("/")[1] || "bin").replace(/[^a-z0-9]/gi, "");
+        const named = new File([blob], `clipboard-${Date.now()}.${ext}`, { type: blob.type });
+        files.push(named);
+      } else {
+        files.push(blob);
+      }
+    }
+    if (files.length === 0) return;
+    e.preventDefault();
+    uploadFiles(files);
+  };
+
   return (
     <div
       className={"transcript-composer" + (dragHover ? " drag-over" : "")}
@@ -379,10 +403,11 @@ function TranscriptComposer({ session, onSent, onError }) {
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={onKeyDown}
+        onPaste={onPaste}
         placeholder={stopped
           ? "Session is stopped — respawn to send messages"
           : supportsAttachments
-            ? "Type a follow-up prompt…  (⌘/Ctrl + Enter to send · drop files to attach)"
+            ? "Type a follow-up prompt…  (⌘/Ctrl + Enter to send · drop or paste files to attach)"
             : "Type a follow-up prompt…  (⌘/Ctrl + Enter to send)"}
         disabled={stopped || sending}
         rows={3}
