@@ -516,9 +516,18 @@ function TranscriptTab({ s, onToast }) {
 
   const allTurns = useM(() => [...turns, ...optimistic], [turns, optimistic]);
 
+  // Auto-scroll to the latest message whenever the turn count grows OR the
+  // session being viewed changes. Two RAFs guarantee the new turns + the
+  // bottom attachments section are laid out before we measure scrollHeight.
   useE(() => {
-    if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
-  }, [allTurns.length]);
+    if (!listRef.current) return;
+    const el = listRef.current;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight;
+      });
+    });
+  }, [allTurns.length, s.sessionId, s.id]);
 
   return (
     <div className="transcript-wrap">
@@ -766,10 +775,10 @@ function DropdownMenu({ open, onClose, items }) {
 
 // ─── Drawer shell ────────────────────────────────────────────────────────────
 function Drawer({ session, onClose, onAction, onToast }) {
-  const [tab, setTab] = useS("detail");
+  const [tab, setTab] = useS("transcript");
   const [paused, setPaused] = useS(false);
   const [menuOpen, setMenuOpen] = useS(false);
-  useE(() => { setTab("detail"); setPaused(false); setMenuOpen(false); }, [session?.id]);
+  useE(() => { setTab("transcript"); setPaused(false); setMenuOpen(false); }, [session?.id]);
 
   useE(() => {
     const fn = (e) => {
