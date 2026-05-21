@@ -130,6 +130,32 @@ function getLogDir(): string {
   return join(getClaudeDir(), "csm-logs");
 }
 
+/**
+ * Format a Node child_process exec error so lifecycle.log captures exit
+ * code, signal, stderr and stdout instead of just "Command failed: …".
+ * stderr/stdout are flattened to a single line so each lifecycle entry
+ * stays on one line.
+ */
+function formatExecError(e: unknown): string {
+  if (!(e instanceof Error)) return String(e);
+  const err = e as Error & {
+    code?: number | string;
+    signal?: string;
+    stderr?: string | Buffer;
+    stdout?: string | Buffer;
+  };
+  const oneLine = (v: unknown) =>
+    String(v ?? "").replace(/\s+/g, " ").trim();
+  const parts: string[] = [err.message];
+  if (err.code !== undefined) parts.push(`code=${err.code}`);
+  if (err.signal) parts.push(`signal=${err.signal}`);
+  const stderr = oneLine(err.stderr);
+  if (stderr) parts.push(`stderr=${stderr}`);
+  const stdout = oneLine(err.stdout);
+  if (stdout) parts.push(`stdout=${stdout}`);
+  return parts.join(" | ");
+}
+
 /** Append a timestamped entry to the session lifecycle log */
 async function logLifecycle(
   sessionId: string,
@@ -712,18 +738,21 @@ export async function createSession(
       `TUI not ready after 90s — initial prompt not injected`,
     );
   } else {
+    const normalized = prompt.replace(/\r\n/g, "\n");
+    const bufName = `csm-init-${sid}-${Date.now()}`;
+    let stage = "set-buffer";
     try {
-      const normalized = prompt.replace(/\r\n/g, "\n");
-      const bufName = `csm-init-${sid}-${Date.now()}`;
       await execFileAsync(TMUX_BIN, ["set-buffer", "-b", bufName, "--", normalized]);
+      stage = "paste-buffer";
       await execFileAsync(TMUX_BIN, ["paste-buffer", "-p", "-d", "-b", bufName, "-t", tmuxSession]);
+      stage = "send-keys";
       await execFileAsync(TMUX_BIN, ["send-keys", "-t", tmuxSession, "Enter"]);
     } catch (e) {
       await logLifecycle(
         sessionId,
         rcName,
         "prompt-send-failed",
-        e instanceof Error ? e.message : String(e),
+        `stage=${stage} ${formatExecError(e)}`,
       );
     }
   }
@@ -1394,18 +1423,19 @@ export async function sendMessage(
   const tmuxSession = await getTmuxSessionName(session);
   if (!tmuxSession) return { ok: false, reason: "no_tmux" };
 
+  // Normalize CRLF → LF so paste-buffer sees a single newline per line.
+  const normalized = prompt.replace(/\r\n/g, "\n");
+  // Use a buffer name unique to this session to avoid collisions.
+  const bufName = `csm-msg-${session.shortId}-${Date.now()}`;
+  let stage = "set-buffer";
   try {
-    // Normalize CRLF → LF so paste-buffer sees a single newline per line.
-    const normalized = prompt.replace(/\r\n/g, "\n");
-
-    // Use a buffer name unique to this session to avoid collisions.
-    const bufName = `csm-msg-${session.shortId}-${Date.now()}`;
-
     // set-buffer with -b <name> and -- ends option parsing so prompts starting
     // with `-` are not misread as flags. execFile avoids any shell escaping.
     await execFileAsync(TMUX_BIN, ["set-buffer", "-b", bufName, "--", normalized]);
+    stage = "paste-buffer";
     // -p: bracketed paste; -d: delete buffer after paste; -t: target session
     await execFileAsync(TMUX_BIN, ["paste-buffer", "-p", "-d", "-b", bufName, "-t", tmuxSession]);
+    stage = "send-keys";
     // Submit the message
     await execFileAsync(TMUX_BIN, ["send-keys", "-t", tmuxSession, "Enter"]);
 
@@ -1417,10 +1447,17 @@ export async function sendMessage(
     );
     return { ok: true };
   } catch (e) {
+    const detail = `stage=${stage} ${formatExecError(e)}`;
+    await logLifecycle(
+      session.sessionId,
+      session.name,
+      "message-send-failed",
+      detail,
+    );
     return {
       ok: false,
       reason: "tmux_failed",
-      detail: e instanceof Error ? e.message : String(e),
+      detail,
     };
   }
 }
