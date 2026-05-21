@@ -293,7 +293,7 @@ button { font: inherit; color: inherit; }
 }
 .view-toggle button[data-active="true"] { background: var(--bg-elev); color: var(--text); box-shadow: var(--shadow-1); }
 
-/* Split view: list on left, detail panel on right */
+/* Split view: list on left, chat panel on right (50/50 on desktop) */
 .split-view {
   flex: 1;
   display: flex;
@@ -301,19 +301,51 @@ button { font: inherit; color: inherit; }
   overflow: hidden;
 }
 .split-list {
-  flex: 1;
+  flex: 1 1 50%;
   min-width: 0;
   overflow: auto;
 }
 .split-panel-scrim { display: none; }
 .split-panel {
-  width: 480px;
-  min-width: 480px;
+  flex: 1 1 50%;
+  min-width: 0;
   border-left: .5px solid var(--border);
   display: flex;
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
+}
+.split-panel-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px;
+  color: var(--text-dim);
+  text-align: center;
+}
+.split-panel-empty-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: .5px solid var(--border);
+  display: grid;
+  place-items: center;
+  margin-bottom: 4px;
+  color: var(--text-muted);
+}
+.split-panel-empty-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.split-panel-empty-hint {
+  font-size: 12px;
+  max-width: 280px;
+  line-height: 1.5;
 }
 
 /* ===== Project Grouped List (Claude-style) ===== */
@@ -995,12 +1027,107 @@ button { font: inherit; color: inherit; }
   color: var(--text);
 }
 
-/* Assistant turn attachments */
-.transcript-turn-attachments {
+/* Inline hint chip in the turn header (count of attachments) */
+.transcript-turn-attach-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface);
+  border: .5px solid var(--border);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  cursor: default;
+}
+.transcript-turn-attach-hint svg {
+  width: 11px;
+  height: 11px;
+}
+
+/* Aggregated attachments section at the bottom of the transcript */
+.transcript-attachments-section {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: .5px dashed var(--border);
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 8px;
-  margin-top: 8px;
+}
+.transcript-attachments-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.transcript-attachments-header svg {
+  width: 12px;
+  height: 12px;
+}
+.transcript-attachments-count {
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--surface);
+  border: .5px solid var(--border);
+  font-size: 10.5px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.transcript-attachments-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.transcript-attachment-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--surface);
+  border: .5px solid var(--border);
+}
+.transcript-attachment-row.is-user {
+  border-left: 2px solid var(--st-idle);
+}
+.transcript-attachment-row.is-assistant {
+  border-left: 2px solid var(--st-working);
+}
+.transcript-attachment-role {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-dim);
+  width: 14px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.transcript-attachment-row .transcript-attachment-img,
+.transcript-attachment-row .transcript-attachment-file {
+  flex: 1;
+  min-width: 0;
+  max-width: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+.transcript-attachment-row .transcript-attachment-img {
+  max-height: 64px;
+}
+.transcript-attachment-row .transcript-attachment-img img {
+  max-height: 64px;
+}
+.transcript-attachment-time {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-dim);
+  flex-shrink: 0;
 }
 .transcript-attachment-img {
   display: inline-block;
@@ -1463,7 +1590,11 @@ button { font: inherit; color: inherit; }
     z-index: 39;
     animation: scrimin .15s ease-out;
   }
-  .split-panel {
+  /* On mobile the panel is hidden by default and only shown as an
+     overlay when a session is selected (.split-view.has-selection). */
+  .split-panel { display: none; }
+  .split-view.has-selection .split-panel {
+    display: flex;
     position: fixed;
     top: 0;
     right: 0;

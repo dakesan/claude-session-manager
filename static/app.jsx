@@ -230,23 +230,33 @@ function App() {
       />
 
       <main className="main main-full">
-        <div className="split-view">
+        <div className={"split-view" + (selected ? " has-selection" : "")}>
           <div className="split-list">
             {view === "list"
               ? <Pieces.ProjectGroupedList sessions={filtered} selectedId={selectedId} onSelect={setSelectedId} onAction={handleAction} />
               : <Pieces.ProjectKanban sessions={filtered} selectedId={selectedId} onSelect={setSelectedId} onAction={handleAction} />}
           </div>
-          {selected && (<>
+          {selected && (
             <div className="split-panel-scrim" onClick={() => setSelectedId(null)} />
-            <div className="split-panel">
+          )}
+          <div className="split-panel">
+            {selected ? (
               <Drawer
                 session={selected}
                 onClose={() => setSelectedId(null)}
                 onAction={handleAction}
                 onToast={showToast}
               />
-            </div>
-          </>)}
+            ) : (
+              <div className="split-panel-empty">
+                <div className="split-panel-empty-icon"><Ico.terminal /></div>
+                <div className="split-panel-empty-title">Select a session</div>
+                <div className="split-panel-empty-hint">
+                  Pick a row from the left to view its chat, send messages, and attach files.
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </main>
 

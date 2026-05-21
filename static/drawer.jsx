@@ -442,22 +442,21 @@ function TranscriptAttachment({ path, nodeUrl }) {
   );
 }
 
-function TranscriptTurn({ turn, nodeUrl }) {
+function TranscriptTurn({ turn }) {
   const isUser = turn.role === "user";
+  const attCount = turn.attachments ? turn.attachments.length : 0;
   return (
     <div className={"transcript-turn" + (isUser ? " is-user" : " is-assistant")}>
       <div className="transcript-turn-role">
         {turn.role}
         <span className="transcript-turn-time">{fmtClock(turn.t)}</span>
+        {attCount > 0 && (
+          <span className="transcript-turn-attach-hint" title="See attachments below">
+            <Ico.folder /> {attCount}
+          </span>
+        )}
       </div>
       {turn.text && <div className="transcript-turn-text">{turn.text}</div>}
-      {turn.attachments && turn.attachments.length > 0 && (
-        <div className="transcript-turn-attachments">
-          {turn.attachments.map((p) => (
-            <TranscriptAttachment key={p} path={p} nodeUrl={nodeUrl} />
-          ))}
-        </div>
-      )}
       {turn.tools && turn.tools.length > 0 && (
         <div className="transcript-turn-tools">
           {turn.tools.map((tool, i) => (
@@ -468,6 +467,36 @@ function TranscriptTurn({ turn, nodeUrl }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function TranscriptAttachmentsSection({ turns, nodeUrl }) {
+  // Flatten attachments across all turns, preserving order and origin.
+  const items = [];
+  for (const t of turns) {
+    if (!t.attachments) continue;
+    for (const p of t.attachments) {
+      items.push({ path: p, role: t.role, t: t.t });
+    }
+  }
+  if (items.length === 0) return null;
+  return (
+    <div className="transcript-attachments-section">
+      <div className="transcript-attachments-header">
+        <Ico.folder />
+        <span>Attachments</span>
+        <span className="transcript-attachments-count">{items.length}</span>
+      </div>
+      <div className="transcript-attachments-list">
+        {items.map((item, i) => (
+          <div key={item.path + i} className={"transcript-attachment-row is-" + item.role}>
+            <span className="transcript-attachment-role" title={item.role}>{item.role[0].toUpperCase()}</span>
+            <TranscriptAttachment path={item.path} nodeUrl={nodeUrl} />
+            <span className="transcript-attachment-time">{fmtClock(item.t)}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -508,7 +537,8 @@ function TranscriptTab({ s, onToast }) {
         {allTurns.length === 0 && !loading && (
           <div className="transcript-empty">No conversation yet</div>
         )}
-        {allTurns.map((t) => <TranscriptTurn key={t.uuid} turn={t} nodeUrl={s.nodeUrl} />)}
+        {allTurns.map((t) => <TranscriptTurn key={t.uuid} turn={t} />)}
+        <TranscriptAttachmentsSection turns={allTurns} nodeUrl={s.nodeUrl} />
       </div>
 
       <TranscriptComposer
