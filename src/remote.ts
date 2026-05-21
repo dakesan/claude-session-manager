@@ -39,13 +39,19 @@ export interface NodeStatus {
 // ─── Fetch helpers ──────────────────────────────────────────────────────────
 
 const FETCH_TIMEOUT_MS = 5000;
+// createSession on the remote can block for up to ~40s (waitForTuiReady 30s
+// + captureRcUrl 10s). The default 5s timeout used to abort the proxy call
+// while the remote was still spawning, leaving the host UI to report a
+// failure for a session that actually got created.
+const CREATE_FETCH_TIMEOUT_MS = 60_000;
 
 async function fetchWithTimeout(
   url: string,
   opts?: RequestInit,
+  timeoutMs: number = FETCH_TIMEOUT_MS,
 ): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, { ...opts, signal: controller.signal });
   } finally {
@@ -214,11 +220,15 @@ export async function proxyCreate(
   model?: string,
 ): Promise<Session | null> {
   try {
-    const res = await fetchWithTimeout(`${nodeUrl}/api/sessions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, name, cwd, model }),
-    });
+    const res = await fetchWithTimeout(
+      `${nodeUrl}/api/sessions`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, name, cwd, model }),
+      },
+      CREATE_FETCH_TIMEOUT_MS,
+    );
     if (!res.ok) return null;
     return (await res.json()) as Session;
   } catch {

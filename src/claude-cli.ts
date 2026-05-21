@@ -683,8 +683,18 @@ export async function createSession(
 
   // Wait for the claude TUI to be ready (poll for the "❯" input cursor).
   // 30s budget because --append-system-prompt slows startup noticeably on
-  // large protocol strings.
-  await waitForTuiReady(tmuxSession, 30);
+  // large protocol strings. Retry once with a doubled budget on slow hosts
+  // (e.g. WGS workers) where the first attempt can miss the cursor.
+  let ready = await waitForTuiReady(tmuxSession, 30);
+  if (!ready) {
+    await logLifecycle(
+      sessionId,
+      rcName,
+      "tui-wait-retry",
+      `first 30s wait timed out; retrying with 60s budget`,
+    );
+    ready = await waitForTuiReady(tmuxSession, 60);
+  }
 
   // Extract PID of the claude process running inside the tmux pane
   const pid = await extractClaudePid(tmuxSession);
@@ -692,14 +702,30 @@ export async function createSession(
   // Send the initial prompt after the TUI is ready. Use paste-buffer
   // instead of bare send-keys so multi-line prompts and special chars
   // (', \, $, backticks) survive intact — same pattern as sendMessage().
-  try {
-    const normalized = prompt.replace(/\r\n/g, "\n");
-    const bufName = `csm-init-${sid}-${Date.now()}`;
-    await execFileAsync(TMUX_BIN, ["set-buffer", "-b", bufName, "--", normalized]);
-    await execFileAsync(TMUX_BIN, ["paste-buffer", "-p", "-d", "-b", bufName, "-t", tmuxSession]);
-    await execFileAsync(TMUX_BIN, ["send-keys", "-t", tmuxSession, "Enter"]);
-  } catch {
-    // Prompt sending failed — the session is still running, user can interact via RC
+  // Skip injection entirely if the TUI never became ready: sending while
+  // claude is still painting drops the prompt silently.
+  if (!ready) {
+    await logLifecycle(
+      sessionId,
+      rcName,
+      "prompt-skipped",
+      `TUI not ready after 90s — initial prompt not injected`,
+    );
+  } else {
+    try {
+      const normalized = prompt.replace(/\r\n/g, "\n");
+      const bufName = `csm-init-${sid}-${Date.now()}`;
+      await execFileAsync(TMUX_BIN, ["set-buffer", "-b", bufName, "--", normalized]);
+      await execFileAsync(TMUX_BIN, ["paste-buffer", "-p", "-d", "-b", bufName, "-t", tmuxSession]);
+      await execFileAsync(TMUX_BIN, ["send-keys", "-t", tmuxSession, "Enter"]);
+    } catch (e) {
+      await logLifecycle(
+        sessionId,
+        rcName,
+        "prompt-send-failed",
+        e instanceof Error ? e.message : String(e),
+      );
+    }
   }
 
   // Extract Remote Control URL from tmux pane output
