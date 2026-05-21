@@ -173,17 +173,38 @@ window.CSM_API = {
     return Array.isArray(data.turns) ? data.turns : [];
   },
 
-  async sendMessage(id, prompt, nodeUrl) {
+  async sendMessage(id, prompt, nodeUrl, attachments) {
     const res = await fetch(`${API}/sessions/${id}/message${nodeQuery(nodeUrl)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify({ prompt, attachments: attachments || undefined }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || res.statusText);
     }
     return res.json();
+  },
+
+  async uploadFiles(id, files, nodeUrl) {
+    const fd = new FormData();
+    for (const f of files) fd.append("files", f, f.name);
+    const res = await fetch(`${API}/sessions/${id}/upload${nodeQuery(nodeUrl)}`, {
+      method: "POST",
+      body: fd,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || res.statusText);
+    }
+    return res.json();
+  },
+
+  fileUrl(path, nodeUrl) {
+    const params = new URLSearchParams();
+    params.set("path", path);
+    if (nodeUrl) params.set("nodeUrl", nodeUrl);
+    return `${API}/files?${params.toString()}`;
   },
 
   async browse(path, nodeUrl) {

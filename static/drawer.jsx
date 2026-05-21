@@ -272,21 +272,60 @@ function useRealTranscript(session) {
   }};
 }
 
+function fmtBytes(n) {
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+  return (n / (1024 * 1024)).toFixed(1) + " MB";
+}
+
 function TranscriptComposer({ session, onSent, onError }) {
   const [text, setText] = useS("");
   const [sending, setSending] = useS(false);
+  const [uploading, setUploading] = useS(false);
+  const [dragHover, setDragHover] = useS(false);
+  // [{name, path, size, type}]
+  const [pending, setPending] = useS([]);
   const taRef = useR(null);
+  const fileRef = useR(null);
 
   const stopped = session.status === "stopped";
+  // Files can only be sent through the protocol on CSM-launched sessions.
+  const supportsAttachments = session.launchedBy === "csm";
+
+  const uploadFiles = async (fileList) => {
+    if (!supportsAttachments || stopped) return;
+    const files = Array.from(fileList || []);
+    if (files.length === 0) return;
+    setUploading(true);
+    try {
+      const id = session.sessionId || session.id;
+      const data = await window.CSM_API.uploadFiles(id, files, session.nodeUrl);
+      setPending((prev) => [...prev, ...(data.files || [])]);
+    } catch (e) {
+      onError?.(e.message || String(e));
+    }
+    setUploading(false);
+  };
+
+  const removePending = (path) => {
+    setPending((prev) => prev.filter((p) => p.path !== path));
+  };
 
   const submit = async () => {
     const trimmed = text.trim();
-    if (!trimmed || sending || stopped) return;
+    if ((!trimmed && pending.length === 0) || sending || stopped) return;
     setSending(true);
     try {
-      await window.CSM_API.sendMessage(session.sessionId || session.id, trimmed, session.nodeUrl);
+      const attachments = pending.map((p) => p.path);
+      await window.CSM_API.sendMessage(
+        session.sessionId || session.id,
+        trimmed,
+        session.nodeUrl,
+        attachments.length ? attachments : undefined,
+      );
       setText("");
-      onSent?.(trimmed);
+      setPending([]);
+      onSent?.(trimmed, attachments);
     } catch (e) {
       onError?.(e.message || String(e));
     }
@@ -301,8 +340,40 @@ function TranscriptComposer({ session, onSent, onError }) {
     }
   };
 
+  const onDrop = (e) => {
+    e.preventDefault();
+    setDragHover(false);
+    if (!supportsAttachments) return;
+    uploadFiles(e.dataTransfer.files);
+  };
+
   return (
-    <div className="transcript-composer">
+    <div
+      className={"transcript-composer" + (dragHover ? " drag-over" : "")}
+      onDragOver={(e) => {
+        if (!supportsAttachments) return;
+        e.preventDefault();
+        setDragHover(true);
+      }}
+      onDragLeave={() => setDragHover(false)}
+      onDrop={onDrop}
+    >
+      {pending.length > 0 && (
+        <div className="composer-attachments">
+          {pending.map((p) => (
+            <span key={p.path} className="composer-attachment-chip" title={p.path}>
+              <span className="composer-attachment-name">{p.name}</span>
+              <span className="composer-attachment-size">{fmtBytes(p.size)}</span>
+              <button
+                className="composer-attachment-remove"
+                onClick={() => removePending(p.path)}
+                aria-label="Remove"
+                type="button"
+              >×</button>
+            </span>
+          ))}
+        </div>
+      )}
       <textarea
         ref={taRef}
         value={text}
@@ -310,17 +381,37 @@ function TranscriptComposer({ session, onSent, onError }) {
         onKeyDown={onKeyDown}
         placeholder={stopped
           ? "Session is stopped — respawn to send messages"
-          : "Type a follow-up prompt…  (⌘/Ctrl + Enter to send)"}
+          : supportsAttachments
+            ? "Type a follow-up prompt…  (⌘/Ctrl + Enter to send · drop files to attach)"
+            : "Type a follow-up prompt…  (⌘/Ctrl + Enter to send)"}
         disabled={stopped || sending}
         rows={3}
       />
+      <input
+        ref={fileRef}
+        type="file"
+        multiple
+        style={{ display: "none" }}
+        onChange={(e) => { uploadFiles(e.target.files); e.target.value = ""; }}
+      />
       <div className="transcript-composer-foot">
         <span className="transcript-composer-hint">
-          {sending ? "sending…" : stopped ? "respawn first" : "delivered via tmux paste"}
+          {sending ? "sending…" : uploading ? "uploading…" : stopped ? "respawn first" : "delivered via tmux paste"}
         </span>
+        {supportsAttachments && (
+          <button
+            className="btn btn-ghost"
+            disabled={uploading || sending || stopped}
+            onClick={() => fileRef.current?.click()}
+            type="button"
+            title="Attach file"
+          >
+            <Ico.folder /> Attach
+          </button>
+        )}
         <button
           className="btn btn-primary"
-          disabled={!text.trim() || sending || stopped}
+          disabled={(!text.trim() && pending.length === 0) || sending || stopped || uploading}
           onClick={submit}
         >
           <Ico.plus /> Send
@@ -330,7 +421,28 @@ function TranscriptComposer({ session, onSent, onError }) {
   );
 }
 
-function TranscriptTurn({ turn }) {
+const IMG_EXTS = /\.(png|jpe?g|gif|webp|svg)$/i;
+
+function TranscriptAttachment({ path, nodeUrl }) {
+  const name = path.split("/").pop() || path;
+  const isImage = IMG_EXTS.test(path);
+  const href = window.CSM_API.fileUrl(path, nodeUrl);
+  if (isImage) {
+    return (
+      <a className="transcript-attachment-img" href={href} target="_blank" rel="noreferrer" title={path}>
+        <img src={href} alt={name} loading="lazy" />
+      </a>
+    );
+  }
+  return (
+    <a className="transcript-attachment-file" href={href} target="_blank" rel="noreferrer" title={path}>
+      <Ico.folder />
+      <span className="transcript-attachment-name">{name}</span>
+    </a>
+  );
+}
+
+function TranscriptTurn({ turn, nodeUrl }) {
   const isUser = turn.role === "user";
   return (
     <div className={"transcript-turn" + (isUser ? " is-user" : " is-assistant")}>
@@ -339,6 +451,13 @@ function TranscriptTurn({ turn }) {
         <span className="transcript-turn-time">{fmtClock(turn.t)}</span>
       </div>
       {turn.text && <div className="transcript-turn-text">{turn.text}</div>}
+      {turn.attachments && turn.attachments.length > 0 && (
+        <div className="transcript-turn-attachments">
+          {turn.attachments.map((p) => (
+            <TranscriptAttachment key={p} path={p} nodeUrl={nodeUrl} />
+          ))}
+        </div>
+      )}
       {turn.tools && turn.tools.length > 0 && (
         <div className="transcript-turn-tools">
           {turn.tools.map((tool, i) => (
@@ -389,19 +508,21 @@ function TranscriptTab({ s, onToast }) {
         {allTurns.length === 0 && !loading && (
           <div className="transcript-empty">No conversation yet</div>
         )}
-        {allTurns.map((t) => <TranscriptTurn key={t.uuid} turn={t} />)}
+        {allTurns.map((t) => <TranscriptTurn key={t.uuid} turn={t} nodeUrl={s.nodeUrl} />)}
       </div>
 
       <TranscriptComposer
         session={s}
-        onSent={(text) => {
+        onSent={(text, attachments) => {
           setOptimistic((prev) => [...prev, {
             uuid: `opt-${Date.now()}`,
             role: "user",
-            text,
+            text: text || (attachments && attachments.length ? "(attachments)" : ""),
+            attachments: attachments && attachments.length ? attachments : undefined,
             t: Date.now(),
           }]);
-          onToast?.("Message sent");
+          const count = (attachments || []).length;
+          onToast?.(count ? `Message sent · ${count} file${count === 1 ? "" : "s"}` : "Message sent");
         }}
         onError={(msg) => onToast?.(`Send failed: ${msg}`)}
       />
