@@ -107,6 +107,7 @@ button { font: inherit; color: inherit; }
   background: var(--bg);
   position: relative;
   z-index: 10;
+  min-width: 0;
 }
 .hdr-brand {
   display: flex; align-items: center; gap: 10px;
@@ -131,7 +132,8 @@ button { font: inherit; color: inherit; }
 .hdr-brand-title .muted { color: var(--text-dim); font-weight: 400; margin-left: 8px; font-size: 12px; }
 
 .hdr-search {
-  flex: 1;
+  flex: 1 1 240px;
+  min-width: 220px;
   max-width: 520px;
   position: relative;
 }
@@ -159,11 +161,13 @@ button { font: inherit; color: inherit; }
   position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
   color: var(--text-dim);
 }
-.hdr-spacer { flex: 1; }
+/* Reserved hook (no flex growth so it does not steal space from search/actions) */
+.hdr-spacer { flex: 0 0 0; }
 
 .hdr-filters {
   display: flex; align-items: center; gap: 2px;
   margin-left: var(--s-2);
+  flex-shrink: 0;
 }
 .hdr-filter-btn {
   appearance: none;
@@ -193,7 +197,7 @@ button { font: inherit; color: inherit; }
 }
 .hdr-filter-btn.active .hdr-filter-count { color: var(--text-muted); }
 
-.hdr-actions { display: flex; align-items: center; gap: var(--s-2); }
+.hdr-actions { display: flex; align-items: center; gap: var(--s-2); margin-left: auto; flex-shrink: 0; }
 
 /* Buttons */
 .btn {
@@ -1505,6 +1509,47 @@ button { font: inherit; color: inherit; }
 }
 
 /* ===== Mobile responsive ===== */
+
+/* Intermediate desktop: header wraps onto two rows so search + actions are not
+   crushed by the 7 filter buttons. The header keeps a single row when there is
+   enough room; below this breakpoint the filter strip moves to its own row and
+   can scroll horizontally if the buttons still overflow. */
+@media (max-width: 1480px) {
+  .app {
+    grid-template-rows: auto 1fr;
+  }
+  .hdr {
+    flex-wrap: wrap;
+    padding-top: 8px;
+    padding-bottom: 8px;
+    row-gap: 6px;
+    min-height: 60px;
+  }
+  .hdr-brand { order: 1; }
+  .hdr-search {
+    order: 2;
+    flex: 1 1 240px;
+    max-width: none;
+  }
+  .hdr-actions {
+    order: 3;
+    margin-left: var(--s-2);
+  }
+  .hdr-spacer { display: none; }
+  .hdr-filters {
+    order: 4;
+    flex: 1 1 100%;
+    margin-left: 0;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    flex-wrap: nowrap;
+  }
+  .hdr-filters::-webkit-scrollbar { display: none; }
+  .hdr-filter-btn { flex-shrink: 0; }
+  /* Drop the ⌘K affordance to keep the primary button compact */
+  .hdr-actions .btn-primary .kbd { display: none; }
+}
 
 /* Tablet & below */
 @media (max-width: 1024px) {
