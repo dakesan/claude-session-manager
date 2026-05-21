@@ -1040,8 +1040,9 @@ button { font: inherit; color: inherit; }
   max-height: 240px;
   border-radius: 6px;
   overflow: hidden;
-  border: .5px solid var(--border);
-  background: var(--surface-2);
+  border: 1px solid color-mix(in srgb, var(--st-idle) 55%, transparent);
+  background: color-mix(in srgb, var(--st-idle) 12%, var(--surface-2));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--st-idle) 18%, transparent) inset;
 }
 .transcript-attachment-img img {
   display: block;
@@ -1055,15 +1056,21 @@ button { font: inherit; color: inherit; }
   gap: 6px;
   padding: 4px 10px;
   border-radius: 6px;
-  background: var(--surface-2);
-  border: .5px solid var(--border);
+  background: color-mix(in srgb, var(--st-idle) 14%, var(--surface-2));
+  border: 1px solid color-mix(in srgb, var(--st-idle) 55%, transparent);
   font-size: 12px;
-  color: var(--text);
+  color: var(--st-idle);
   text-decoration: none;
   max-width: 280px;
+  font-weight: 500;
+}
+.transcript-attachment-file svg {
+  color: var(--st-idle);
+  flex-shrink: 0;
 }
 .transcript-attachment-file:hover {
-  background: var(--hover);
+  background: color-mix(in srgb, var(--st-idle) 22%, var(--surface-2));
+  border-color: color-mix(in srgb, var(--st-idle) 75%, transparent);
 }
 .transcript-attachment-file .transcript-attachment-name {
   overflow: hidden;
