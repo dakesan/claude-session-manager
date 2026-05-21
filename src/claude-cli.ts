@@ -1175,3 +1175,186 @@ function extractAssistantText(message: Record<string, unknown> | undefined): str
   }
   return "";
 }
+
+// ─── Structured transcript ──────────────────────────────────────────────────
+
+export interface TranscriptTool {
+  name: string;
+  /** Single-line summary of the tool input (e.g. "rm -rf foo" for Bash) */
+  summary?: string;
+}
+
+export interface TranscriptTurn {
+  uuid: string;
+  role: "user" | "assistant" | "system";
+  /** Plain text portion of the message, if any */
+  text?: string;
+  /** Tool invocations from the assistant */
+  tools?: TranscriptTool[];
+  /** Epoch ms */
+  t: number;
+}
+
+/** Best-effort one-line summary for a tool_use input object */
+function summarizeToolInput(name: string, input: unknown): string | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const obj = input as Record<string, unknown>;
+  // Prefer a few common keys that hold the “primary” argument.
+  for (const k of ["command", "file_path", "path", "pattern", "url", "prompt", "description"]) {
+    const v = obj[k];
+    if (typeof v === "string" && v.trim()) {
+      return v.replace(/\s+/g, " ").slice(0, 160) + (v.length > 160 ? "…" : "");
+    }
+  }
+  const fallback = JSON.stringify(obj);
+  return fallback.length > 160 ? fallback.slice(0, 160) + "…" : fallback;
+}
+
+/**
+ * Read the JSONL transcript and return structured turns suitable for chat-style
+ * rendering. Tool-result-only user messages are skipped (those are auto-injected
+ * by Claude after tool execution and not user-typed).
+ */
+export async function getTranscript(id: string): Promise<TranscriptTurn[]> {
+  const session = await getSession(id);
+  if (!session) return [];
+
+  const projectsDir = join(getClaudeDir(), "projects");
+  let projectSlugs: string[];
+  try {
+    projectSlugs = await readdir(projectsDir);
+  } catch {
+    return [];
+  }
+
+  for (const slug of projectSlugs) {
+    const jsonlPath = join(projectsDir, slug, `${session.sessionId}.jsonl`);
+    let content: string;
+    try {
+      content = await readFile(jsonlPath, "utf-8");
+    } catch {
+      continue;
+    }
+
+    const lines = content.split("\n").filter(Boolean);
+    const turns: TranscriptTurn[] = [];
+
+    for (const line of lines) {
+      let obj: Record<string, unknown>;
+      try {
+        obj = JSON.parse(line);
+      } catch {
+        continue;
+      }
+
+      const t = typeof obj.timestamp === "string" ? Date.parse(obj.timestamp) : Date.now();
+      const uuid = (obj.uuid as string) || `t${turns.length}`;
+
+      if (obj.type === "user") {
+        const msg = obj.message as Record<string, unknown> | undefined;
+        if (!msg) continue;
+        const c = msg.content;
+        if (typeof c === "string") {
+          const text = c.trim();
+          if (!text) continue;
+          turns.push({ uuid, role: "user", text, t });
+        } else if (Array.isArray(c)) {
+          // Skip user messages that contain only tool_result blocks
+          // (those are Claude's automatic feedback, not user-typed input).
+          const userText = c
+            .filter((b: Record<string, unknown>) => b.type === "text")
+            .map((b: Record<string, unknown>) => b.text as string)
+            .join("\n")
+            .trim();
+          if (userText) turns.push({ uuid, role: "user", text: userText, t });
+        }
+      } else if (obj.type === "assistant") {
+        const msg = obj.message as Record<string, unknown> | undefined;
+        if (!msg) continue;
+        const c = msg.content;
+        if (!Array.isArray(c)) continue;
+        const text = c
+          .filter((b: Record<string, unknown>) => b.type === "text")
+          .map((b: Record<string, unknown>) => b.text as string)
+          .join("\n")
+          .trim();
+        const tools: TranscriptTool[] = c
+          .filter((b: Record<string, unknown>) => b.type === "tool_use")
+          .map((b: Record<string, unknown>) => ({
+            name: (b.name as string) || "tool",
+            summary: summarizeToolInput((b.name as string) || "", b.input),
+          }));
+        if (!text && tools.length === 0) continue;
+        turns.push({
+          uuid,
+          role: "assistant",
+          text: text || undefined,
+          tools: tools.length ? tools : undefined,
+          t,
+        });
+      }
+      // Other types (ai-title, attachment, file-history-snapshot, etc.) are ignored
+    }
+
+    return turns;
+  }
+
+  return [];
+}
+
+// ─── Send message to running session ────────────────────────────────────────
+
+export type SendMessageResult =
+  | { ok: true }
+  | { ok: false; reason: "not_found" | "stopped" | "no_tmux" | "tmux_failed"; detail?: string };
+
+/**
+ * Inject a prompt into a running session's tmux pane.
+ *
+ * Uses tmux's paste-buffer with bracketed paste (-p) so multi-line text and
+ * special characters reach Claude's TUI intact, then sends Enter to submit.
+ *
+ * Requires the session to be in `working` or `waiting` state (i.e. its tmux
+ * pane is alive). Stopped sessions return { ok:false, reason:"stopped" }.
+ */
+export async function sendMessage(
+  id: string,
+  prompt: string,
+): Promise<SendMessageResult> {
+  const session = await getSession(id);
+  if (!session) return { ok: false, reason: "not_found" };
+  if (session.state === "stopped") return { ok: false, reason: "stopped" };
+
+  const tmuxSession = await getTmuxSessionName(session);
+  if (!tmuxSession) return { ok: false, reason: "no_tmux" };
+
+  try {
+    // Normalize CRLF → LF so paste-buffer sees a single newline per line.
+    const normalized = prompt.replace(/\r\n/g, "\n");
+
+    // Use a buffer name unique to this session to avoid collisions.
+    const bufName = `csm-msg-${session.shortId}-${Date.now()}`;
+
+    // set-buffer with -b <name> and -- ends option parsing so prompts starting
+    // with `-` are not misread as flags. execFile avoids any shell escaping.
+    await execFileAsync(TMUX_BIN, ["set-buffer", "-b", bufName, "--", normalized]);
+    // -p: bracketed paste; -d: delete buffer after paste; -t: target session
+    await execFileAsync(TMUX_BIN, ["paste-buffer", "-p", "-d", "-b", bufName, "-t", tmuxSession]);
+    // Submit the message
+    await execFileAsync(TMUX_BIN, ["send-keys", "-t", tmuxSession, "Enter"]);
+
+    await logLifecycle(
+      session.sessionId,
+      session.name,
+      "message-sent",
+      `len=${normalized.length}`,
+    );
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      reason: "tmux_failed",
+      detail: e instanceof Error ? e.message : String(e),
+    };
+  }
+}

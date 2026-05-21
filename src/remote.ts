@@ -241,6 +241,47 @@ export async function proxyGetLogs(
   }
 }
 
+/** Proxy a transcript request to the correct remote node */
+export async function proxyGetTranscript(
+  nodeUrl: string,
+  sessionId: string,
+): Promise<unknown[] | null> {
+  try {
+    const res = await fetchWithTimeout(`${nodeUrl}/api/sessions/${sessionId}/transcript`);
+    if (!res.ok) return null;
+    const data = (await res.json()) as { turns?: unknown[] };
+    return Array.isArray(data.turns) ? data.turns : [];
+  } catch {
+    return null;
+  }
+}
+
+/** Proxy a send-message request to the correct remote node */
+export async function proxyMessage(
+  nodeUrl: string,
+  sessionId: string,
+  prompt: string,
+): Promise<{ ok: boolean; status: number; body: unknown }> {
+  try {
+    const res = await fetchWithTimeout(
+      `${nodeUrl}/api/sessions/${sessionId}/message`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      },
+    );
+    const body = await res.json().catch(() => ({}));
+    return { ok: res.ok, status: res.status, body };
+  } catch (e) {
+    return {
+      ok: false,
+      status: 502,
+      body: { error: e instanceof Error ? e.message : String(e) },
+    };
+  }
+}
+
 /** Proxy a directory-browse request to a remote node */
 export async function proxyBrowse(
   nodeUrl: string,
