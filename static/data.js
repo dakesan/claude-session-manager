@@ -154,6 +154,26 @@ window.CSM_API = {
     return data.logs || "(no output)";
   },
 
+  async getTranscript(id, nodeUrl) {
+    const res = await fetch(`${API}/sessions/${id}/transcript${nodeQuery(nodeUrl)}`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data.turns) ? data.turns : [];
+  },
+
+  async sendMessage(id, prompt, nodeUrl) {
+    const res = await fetch(`${API}/sessions/${id}/message${nodeQuery(nodeUrl)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || res.statusText);
+    }
+    return res.json();
+  },
+
   async browse(path, nodeUrl) {
     const params = new URLSearchParams();
     if (path) params.set("path", path);

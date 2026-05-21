@@ -157,6 +157,48 @@ app.get("/api/sessions/:id/logs", async (c) => {
   return c.json({ shortId: id, logs });
 });
 
+app.get("/api/sessions/:id/transcript", async (c) => {
+  const id = c.req.param("id");
+  const nodeUrl = c.req.query("nodeUrl");
+
+  if (nodeUrl) {
+    const turns = await remote.proxyGetTranscript(nodeUrl, id);
+    if (turns === null) return c.json({ error: "Remote node unreachable" }, 502);
+    return c.json({ shortId: id, turns });
+  }
+
+  const turns = await cli.getTranscript(id);
+  return c.json({ shortId: id, turns });
+});
+
+app.post("/api/sessions/:id/message", async (c) => {
+  const id = c.req.param("id");
+  const nodeUrl = c.req.query("nodeUrl");
+
+  const body = await c.req
+    .json<{ prompt?: string }>()
+    .catch(() => ({} as { prompt?: string }));
+  const prompt = (body.prompt || "").trim();
+  if (!prompt) return c.json({ error: "prompt is required" }, 400);
+
+  if (nodeUrl) {
+    const r = await remote.proxyMessage(nodeUrl, id, prompt);
+    return c.json(r.body, r.status as 200 | 400 | 404 | 409 | 502);
+  }
+
+  const result = await cli.sendMessage(id, prompt);
+  if (result.ok) return c.json({ status: "sent", shortId: id });
+
+  if (result.reason === "not_found") return c.json({ error: "Session not found" }, 404);
+  if (result.reason === "stopped") {
+    return c.json({ error: "Session is stopped — respawn it before sending messages" }, 409);
+  }
+  if (result.reason === "no_tmux") {
+    return c.json({ error: "No tmux pane found for session" }, 409);
+  }
+  return c.json({ error: result.detail || "tmux send failed" }, 500);
+});
+
 app.get("/api/sessions/:id/rc-url", async (c) => {
   const id = c.req.param("id");
   const rcUrl = await cli.refreshRcUrl(id);

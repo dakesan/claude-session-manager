@@ -213,6 +213,7 @@ function App() {
                 session={selected}
                 onClose={() => setSelectedId(null)}
                 onAction={handleAction}
+                onToast={showToast}
               />
             </div>
           </>)}

@@ -228,39 +228,183 @@ function LogsTab({ s, paused, onTogglePause }) {
   );
 }
 
-function TranscriptTab({ s }) {
-  // Lightweight conversation preview
-  const turns = [
-    { role: "user", text: s.prompt },
-    { role: "assistant", text: "I'll start by looking at the current behavior. Let me read the test file and run it a handful of times to confirm the failure rate." },
-    { role: "tool", text: "Bash · pnpm vitest run checkout-flow --reporter=verbose" },
-    { role: "assistant", text: "The test passed locally on the first run. Let me loop it 50× and capture the failures so I can see what's varying between runs." },
-    { role: "tool", text: "Bash · for i in {1..50}; do …" },
-    { role: "assistant", text: "Got it — 11 of 50 fail. The pattern matches CI. Looking at the test, the issue is in `useDraftOrder`: the effect depends on `cart` (object) and `cart.items`, but `cart` reference churns from an unrelated mutation, racing the draft restore." },
-  ];
+function useRealTranscript(session) {
+  const [turns, setTurns] = useS([]);
+  const [loading, setLoading] = useS(false);
+  const lastId = useR(null);
+
+  useE(() => {
+    if (!session?.sessionId && !session?.id) return;
+    const id = session.sessionId || session.id;
+    const reset = id !== lastId.current;
+    lastId.current = id;
+    if (reset) {
+      setTurns([]);
+      setLoading(true);
+    }
+
+    const fetchTurns = async () => {
+      if (!window.CSM_API) return;
+      try {
+        const data = await window.CSM_API.getTranscript(id, session.nodeUrl);
+        setTurns(data);
+      } catch {
+        // keep previous turns on transient failure
+      }
+      setLoading(false);
+    };
+
+    fetchTurns();
+    // Re-fetch every 3s for active sessions so new turns appear after send
+    if (session.status === "working" || session.status === "waiting") {
+      const i = setInterval(fetchTurns, 3000);
+      return () => clearInterval(i);
+    }
+  }, [session?.sessionId, session?.id, session?.status]);
+
+  return { turns, loading, refresh: async () => {
+    if (!window.CSM_API) return;
+    const id = session.sessionId || session.id;
+    try {
+      const data = await window.CSM_API.getTranscript(id, session.nodeUrl);
+      setTurns(data);
+    } catch {}
+  }};
+}
+
+function TranscriptComposer({ session, onSent, onError }) {
+  const [text, setText] = useS("");
+  const [sending, setSending] = useS(false);
+  const taRef = useR(null);
+
+  const stopped = session.status === "stopped";
+
+  const submit = async () => {
+    const trimmed = text.trim();
+    if (!trimmed || sending || stopped) return;
+    setSending(true);
+    try {
+      await window.CSM_API.sendMessage(session.sessionId || session.id, trimmed, session.nodeUrl);
+      setText("");
+      onSent?.(trimmed);
+    } catch (e) {
+      onError?.(e.message || String(e));
+    }
+    setSending(false);
+    setTimeout(() => taRef.current?.focus(), 0);
+  };
+
+  const onKeyDown = (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      submit();
+    }
+  };
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      {turns.map((t, i) => (
-        <div key={i} style={{
-          padding: "10px 14px",
-          borderRadius: 10,
-          background: t.role === "user" ? "var(--surface-2)" :
-                      t.role === "tool" ? "var(--surface)" : "transparent",
-          border: t.role === "tool" ? ".5px solid var(--border)" : "none",
-          fontFamily: t.role === "tool" ? "var(--font-mono)" : "var(--font-sans)",
-          fontSize: t.role === "tool" ? 11.5 : 12.5,
-          color: t.role === "tool" ? "var(--st-idle)" : "var(--text)",
-          lineHeight: 1.55,
-        }}>
-          <div style={{ fontSize: 10.5, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4, fontFamily: "var(--font-sans)" }}>
-            {t.role}
-          </div>
-          {t.text}
-        </div>
-      ))}
-      <div style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "center", marginTop: 6 }}>
-        Transcript truncated · {s.turns} turns total · ~/.claude/projects/{s.project}/{s.id}.jsonl
+    <div className="transcript-composer">
+      <textarea
+        ref={taRef}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={onKeyDown}
+        placeholder={stopped
+          ? "Session is stopped — respawn to send messages"
+          : "Type a follow-up prompt…  (⌘/Ctrl + Enter to send)"}
+        disabled={stopped || sending}
+        rows={3}
+      />
+      <div className="transcript-composer-foot">
+        <span className="transcript-composer-hint">
+          {sending ? "sending…" : stopped ? "respawn first" : "delivered via tmux paste"}
+        </span>
+        <button
+          className="btn btn-primary"
+          disabled={!text.trim() || sending || stopped}
+          onClick={submit}
+        >
+          <Ico.plus /> Send
+        </button>
       </div>
+    </div>
+  );
+}
+
+function TranscriptTurn({ turn }) {
+  const isUser = turn.role === "user";
+  return (
+    <div className={"transcript-turn" + (isUser ? " is-user" : " is-assistant")}>
+      <div className="transcript-turn-role">
+        {turn.role}
+        <span className="transcript-turn-time">{fmtClock(turn.t)}</span>
+      </div>
+      {turn.text && <div className="transcript-turn-text">{turn.text}</div>}
+      {turn.tools && turn.tools.length > 0 && (
+        <div className="transcript-turn-tools">
+          {turn.tools.map((tool, i) => (
+            <div key={i} className="transcript-tool">
+              <span className="transcript-tool-name">{tool.name}</span>
+              {tool.summary && <span className="transcript-tool-summary">{tool.summary}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TranscriptTab({ s, onToast }) {
+  const { turns, loading, refresh } = useRealTranscript(s);
+  const [optimistic, setOptimistic] = useS([]);
+  const listRef = useR(null);
+
+  // When real turns catch up to optimistic ones, drop the latter
+  useE(() => {
+    if (optimistic.length === 0) return;
+    setOptimistic((prev) =>
+      prev.filter((opt) => !turns.some((t) => t.text === opt.text && t.role === "user" && t.t >= opt.t - 5000)),
+    );
+  }, [turns]);
+
+  const allTurns = useM(() => [...turns, ...optimistic], [turns, optimistic]);
+
+  useE(() => {
+    if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+  }, [allTurns.length]);
+
+  return (
+    <div className="transcript-wrap">
+      <div className="transcript-toolbar">
+        <span className="pill">
+          <span className="dot" data-status={s.status === "stopped" ? "stopped" : "working"} style={{ width: 6, height: 6 }} />
+          {loading && turns.length === 0 ? "loading" : `${turns.length} turn${turns.length === 1 ? "" : "s"}`}
+        </span>
+        <div style={{ flex: 1 }} />
+        <button className="btn btn-ghost" title="Refresh" onClick={refresh}>
+          <Ico.refresh /> Refresh
+        </button>
+      </div>
+
+      <div className="transcript-list" ref={listRef}>
+        {allTurns.length === 0 && !loading && (
+          <div className="transcript-empty">No conversation yet</div>
+        )}
+        {allTurns.map((t) => <TranscriptTurn key={t.uuid} turn={t} />)}
+      </div>
+
+      <TranscriptComposer
+        session={s}
+        onSent={(text) => {
+          setOptimistic((prev) => [...prev, {
+            uuid: `opt-${Date.now()}`,
+            role: "user",
+            text,
+            t: Date.now(),
+          }]);
+          onToast?.("Message sent");
+        }}
+        onError={(msg) => onToast?.(`Send failed: ${msg}`)}
+      />
     </div>
   );
 }
@@ -470,7 +614,7 @@ function DropdownMenu({ open, onClose, items }) {
 }
 
 // ─── Drawer shell ────────────────────────────────────────────────────────────
-function Drawer({ session, onClose, onAction, toast }) {
+function Drawer({ session, onClose, onAction, onToast }) {
   const [tab, setTab] = useS("detail");
   const [paused, setPaused] = useS(false);
   const [menuOpen, setMenuOpen] = useS(false);
@@ -546,7 +690,7 @@ function Drawer({ session, onClose, onAction, toast }) {
       <div className={tab === "terminal" ? "panel-body panel-body-terminal" : "panel-body"}>
         {tab === "detail" && <DetailTab s={s} />}
         {tab === "logs" && <LogsTab s={s} paused={paused} onTogglePause={() => setPaused((p) => !p)} />}
-        {tab === "transcript" && <TranscriptTab s={s} />}
+        {tab === "transcript" && <TranscriptTab s={s} onToast={onToast} />}
         {tab === "terminal" && <TerminalTab s={s} />}
       </div>
     </div>
