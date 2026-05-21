@@ -27,7 +27,11 @@ import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { CONFIG } from "./config.js";
 import { CSM_FILE_PROTOCOL } from "./prompts.js";
-import { extractFilePaths, stripFilePaths } from "./file-extract.js";
+import {
+  extractAttachmentBlock,
+  extractFilePaths,
+  stripFilePaths,
+} from "./file-extract.js";
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -1272,20 +1276,27 @@ export async function getTranscript(id: string): Promise<TranscriptTurn[]> {
         const msg = obj.message as Record<string, unknown> | undefined;
         if (!msg) continue;
         const c = msg.content;
+        let rawText = "";
         if (typeof c === "string") {
-          const text = c.trim();
-          if (!text) continue;
-          turns.push({ uuid, role: "user", text, t });
+          rawText = c.trim();
         } else if (Array.isArray(c)) {
           // Skip user messages that contain only tool_result blocks
           // (those are Claude's automatic feedback, not user-typed input).
-          const userText = c
+          rawText = c
             .filter((b: Record<string, unknown>) => b.type === "text")
             .map((b: Record<string, unknown>) => b.text as string)
             .join("\n")
             .trim();
-          if (userText) turns.push({ uuid, role: "user", text: userText, t });
         }
+        if (!rawText) continue;
+        const { text: cleaned, paths } = extractAttachmentBlock(rawText);
+        turns.push({
+          uuid,
+          role: "user",
+          text: cleaned || undefined,
+          attachments: paths.length ? paths : undefined,
+          t,
+        });
       } else if (obj.type === "assistant") {
         const msg = obj.message as Record<string, unknown> | undefined;
         if (!msg) continue;

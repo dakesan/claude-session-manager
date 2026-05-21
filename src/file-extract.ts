@@ -83,3 +83,32 @@ export function stripFilePaths(text: string): string {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
+
+/**
+ * Parse the `[添付ファイル]` block emitted by the message endpoint when a user
+ * upload accompanies a prompt. The block has the literal shape:
+ *
+ *     <user prompt>\n\n[添付ファイル]\n  - /abs/path\n  - /abs/path
+ *
+ * Returns the cleaned text (with the block removed) and the list of paths
+ * that actually exist on disk. If the block is absent the original text is
+ * returned with paths=[].
+ */
+export function extractAttachmentBlock(text: string): { text: string; paths: string[] } {
+  if (!text || !text.includes("[添付ファイル]")) {
+    return { text, paths: [] };
+  }
+  const blockPattern = /\n*\[添付ファイル\]\n((?:[ \t]*-[ \t]+\/[^\n]+\n?)+)/;
+  const m = blockPattern.exec(text);
+  if (!m) return { text, paths: [] };
+  const lines = m[1].split("\n");
+  const paths: string[] = [];
+  for (const line of lines) {
+    const lm = /^[ \t]*-[ \t]+(\/[^\s]+)/.exec(line);
+    if (!lm) continue;
+    const p = lm[1];
+    if (existsSync(p)) paths.push(p);
+  }
+  const cleaned = text.replace(blockPattern, "").trim();
+  return { text: cleaned, paths };
+}
