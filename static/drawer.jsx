@@ -1026,7 +1026,17 @@ function NewSessionModal({ open, onClose, onCreate }) {
   }
 
   function autoName(p) {
-    return p.split(/\s+/).slice(0, 3).join("-").toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 24) || "session";
+    // Strip non-[a-z0-9-], then collapse repeats and trim edge dashes so a
+    // mostly-non-ASCII prompt like "…Snakemake…" doesn't yield "-snakemake-"
+    // (which used to break claude's argv parser before we switched to
+    // --flag=value form).
+    const slug = p.split(/\s+/).slice(0, 3).join("-").toLowerCase()
+      .replace(/[^a-z0-9-]/g, "")
+      .replace(/-+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 24)
+      .replace(/-+$/, "");
+    return slug || "session";
   }
 
   if (!open) return null;
