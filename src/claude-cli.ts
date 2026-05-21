@@ -681,19 +681,23 @@ export async function createSession(
     // non-fatal
   }
 
-  // Wait for the claude TUI to be ready (poll for the input prompt)
-  await waitForTuiReady(tmuxSession, 15);
+  // Wait for the claude TUI to be ready (poll for the "❯" input cursor).
+  // 30s budget because --append-system-prompt slows startup noticeably on
+  // large protocol strings.
+  await waitForTuiReady(tmuxSession, 30);
 
   // Extract PID of the claude process running inside the tmux pane
   const pid = await extractClaudePid(tmuxSession);
 
-  // Send the initial prompt after claude TUI is ready
+  // Send the initial prompt after the TUI is ready. Use paste-buffer
+  // instead of bare send-keys so multi-line prompts and special chars
+  // (', \, $, backticks) survive intact — same pattern as sendMessage().
   try {
-    // Escape the prompt for tmux send-keys
-    const escapedPrompt = prompt.replace(/\\/g, "\\\\").replace(/'/g, "'\\''");
-    await execAsync(
-      `${TMUX_BIN} send-keys -t '${tmuxSession}' '${escapedPrompt}' Enter`,
-    );
+    const normalized = prompt.replace(/\r\n/g, "\n");
+    const bufName = `csm-init-${sid}-${Date.now()}`;
+    await execFileAsync(TMUX_BIN, ["set-buffer", "-b", bufName, "--", normalized]);
+    await execFileAsync(TMUX_BIN, ["paste-buffer", "-p", "-d", "-b", bufName, "-t", tmuxSession]);
+    await execFileAsync(TMUX_BIN, ["send-keys", "-t", tmuxSession, "Enter"]);
   } catch {
     // Prompt sending failed — the session is still running, user can interact via RC
   }
@@ -853,21 +857,22 @@ async function waitForTuiReady(
   tmuxSession: string,
   maxWaitSec: number,
 ): Promise<boolean> {
-  const interval = 1000;
+  const interval = 500;
   const maxAttempts = Math.ceil((maxWaitSec * 1000) / interval);
 
+  // Claude Code renders an "❯" input cursor on the line just above the
+  // status bar once it is actually accepting keystrokes. The startup
+  // banner ("claude.ai/code/...", model info, tips panel) is printed
+  // *before* that cursor appears, so we cannot key off the banner alone
+  // or send-keys arrives while the TUI is still painting.
   for (let i = 0; i < maxAttempts; i++) {
     try {
       const { stdout } = await execAsync(
-        `${TMUX_BIN} capture-pane -t '${tmuxSession}' -p -S -10`,
+        `${TMUX_BIN} capture-pane -t '${tmuxSession}' -p -S -30`,
       );
-      // Claude TUI shows ">" prompt when ready for input, or the
-      // text "What can I help you with?" or similar greeting
-      if (
-        stdout.includes(">") ||
-        stdout.includes("What can I help") ||
-        stdout.includes("claude.ai/code")
-      ) {
+      if (stdout.includes("❯")) {
+        // Settle briefly so the TUI is past any final layout pass.
+        await new Promise((resolve) => setTimeout(resolve, 400));
         return true;
       }
     } catch {
@@ -968,13 +973,17 @@ export async function respawnSession(id: string): Promise<boolean> {
     // No stale session — expected
   }
 
-  // Build the claude command with --resume to restore the exact session
+  // Build the claude command with --resume to restore the exact session.
+  // Re-inject the CSM file protocol so respawned sessions keep the same
+  // attachment conventions they were originally launched with.
   const resumeArgs = [
     CLAUDE_BIN,
     "--resume",
     session.sessionId,
     "--remote-control",
     rcName,
+    "--append-system-prompt",
+    CSM_FILE_PROTOCOL,
   ];
   if (CONFIG.session.dangerouslySkipPermissions) {
     resumeArgs.push("--dangerously-skip-permissions");
@@ -1012,8 +1021,8 @@ export async function respawnSession(id: string): Promise<boolean> {
       // non-fatal
     }
 
-    // Wait for TUI to be ready
-    await waitForTuiReady(tmuxSession, 15);
+    // Wait for TUI to be ready (matching the spawn budget)
+    await waitForTuiReady(tmuxSession, 30);
 
     // Extract PID
     const pid = await extractClaudePid(tmuxSession);
