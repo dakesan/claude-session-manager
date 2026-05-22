@@ -156,6 +156,47 @@ function formatExecError(e: unknown): string {
   return parts.join(" | ");
 }
 
+/**
+ * Populate a tmux paste buffer via stdin.
+ *
+ * Using `set-buffer -b <name> -- <data>` ships the entire prompt as a
+ * single argv element through tmux's command parser, which has a hard
+ * cap and rejects long inputs with `command too long` (exit 1). Pasting
+ * a moderately large prompt (e.g. a 19 KB Notion dump) hits this every
+ * time and silently strands the new session with no initial prompt.
+ *
+ * `load-buffer -b <name> -` reads the data from stdin instead, so the
+ * argv stays tiny and there's no practical size limit on what we can
+ * inject.
+ */
+async function tmuxLoadBuffer(bufName: string, content: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(TMUX_BIN, ["load-buffer", "-b", bufName, "-"], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (d) => {
+      stderr += d.toString();
+    });
+    child.on("error", reject);
+    child.on("close", (code, signal) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      const err = new Error(
+        `tmux load-buffer exited code=${code}${signal ? ` signal=${signal}` : ""}${stderr.trim() ? ` stderr=${stderr.trim()}` : ""}`,
+      ) as Error & { code?: number | null; signal?: string | null; stderr?: string };
+      err.code = code;
+      err.signal = signal;
+      err.stderr = stderr;
+      reject(err);
+    });
+    child.stdin.on("error", reject);
+    child.stdin.end(content);
+  });
+}
+
 /** Append a timestamped entry to the session lifecycle log */
 async function logLifecycle(
   sessionId: string,
@@ -740,9 +781,11 @@ export async function createSession(
   } else {
     const normalized = prompt.replace(/\r\n/g, "\n");
     const bufName = `csm-init-${sid}-${Date.now()}`;
-    let stage = "set-buffer";
+    let stage = "load-buffer";
     try {
-      await execFileAsync(TMUX_BIN, ["set-buffer", "-b", bufName, "--", normalized]);
+      // load-buffer reads from stdin, bypassing tmux's command-parser
+      // length cap that "set-buffer -- <data>" hits for large prompts.
+      await tmuxLoadBuffer(bufName, normalized);
       stage = "paste-buffer";
       await execFileAsync(TMUX_BIN, ["paste-buffer", "-p", "-d", "-b", bufName, "-t", tmuxSession]);
       stage = "send-keys";
@@ -752,7 +795,7 @@ export async function createSession(
         sessionId,
         rcName,
         "prompt-send-failed",
-        `stage=${stage} ${formatExecError(e)}`,
+        `stage=${stage} bytes=${Buffer.byteLength(normalized)} ${formatExecError(e)}`,
       );
     }
   }
@@ -1427,11 +1470,11 @@ export async function sendMessage(
   const normalized = prompt.replace(/\r\n/g, "\n");
   // Use a buffer name unique to this session to avoid collisions.
   const bufName = `csm-msg-${session.shortId}-${Date.now()}`;
-  let stage = "set-buffer";
+  let stage = "load-buffer";
   try {
-    // set-buffer with -b <name> and -- ends option parsing so prompts starting
-    // with `-` are not misread as flags. execFile avoids any shell escaping.
-    await execFileAsync(TMUX_BIN, ["set-buffer", "-b", bufName, "--", normalized]);
+    // load-buffer reads from stdin, bypassing tmux's command-parser
+    // length cap that "set-buffer -- <data>" hits for large prompts.
+    await tmuxLoadBuffer(bufName, normalized);
     stage = "paste-buffer";
     // -p: bracketed paste; -d: delete buffer after paste; -t: target session
     await execFileAsync(TMUX_BIN, ["paste-buffer", "-p", "-d", "-b", bufName, "-t", tmuxSession]);
@@ -1447,7 +1490,7 @@ export async function sendMessage(
     );
     return { ok: true };
   } catch (e) {
-    const detail = `stage=${stage} ${formatExecError(e)}`;
+    const detail = `stage=${stage} bytes=${Buffer.byteLength(normalized)} ${formatExecError(e)}`;
     await logLifecycle(
       session.sessionId,
       session.name,
