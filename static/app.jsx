@@ -60,7 +60,7 @@ function App() {
     const i = setInterval(poll, 3000);
     return () => clearInterval(i);
   }, []);
-  const [filter, setFilter] = uS("active");
+  const [filter, setFilter] = uS("all");
   const [view, setView] = uS(t.view);
   const [modalOpen, setModalOpen] = uS(false);
   const [terminalOpen, setTerminalOpen] = uS(false);

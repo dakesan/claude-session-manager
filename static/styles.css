@@ -11,9 +11,10 @@
   /* Radii */
   --r-1: 4px; --r-2: 6px; --r-3: 8px; --r-4: 10px; --r-5: 14px;
 
-  /* Status hues — same chroma & lightness so they harmonize */
-  --st-working: oklch(0.74 0.16 145);
-  --st-waiting: oklch(0.80 0.14 85);
+  /* Status hues — same chroma & lightness so they harmonize.
+     working = amber, waiting = green (swapped per design preference). */
+  --st-working: oklch(0.80 0.14 85);
+  --st-waiting: oklch(0.74 0.16 145);
   --st-stopped: oklch(0.65 0.02 250);
   /* Legacy aliases kept for non-status UI reuse */
   --st-idle:    oklch(0.74 0.10 240);

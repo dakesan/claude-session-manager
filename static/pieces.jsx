@@ -53,12 +53,8 @@ function Header({ theme, onToggleTheme, query, onQuery, onNew, onOpenPalette, te
 
   const filters = [
     { id: "all",      label: "All" },
-    { id: "active",   label: "Active" },
     { id: "working",  label: "Working" },
     { id: "waiting",  label: "Waiting" },
-    { id: "stopped",  label: "Stopped" },
-    { id: "archived", label: "Archived" },
-    { id: "dead",     label: "Dead" },
   ];
 
   return (
@@ -85,7 +81,7 @@ function Header({ theme, onToggleTheme, query, onQuery, onNew, onOpenPalette, te
             className={"hdr-filter-btn" + (filter === f.id ? " active" : "")}
             onClick={() => onFilter(f.id)}
           >
-            {f.id !== "all" && f.id !== "active" && <span className="dot" data-status={f.id} style={{ width: 6, height: 6 }} />}
+            {f.id !== "all" && <span className="dot" data-status={f.id} style={{ width: 6, height: 6 }} />}
             {f.label}
             {(counts[f.id] ?? 0) > 0 && <span className="hdr-filter-count">{counts[f.id]}</span>}
           </button>
