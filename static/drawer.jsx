@@ -228,7 +228,15 @@ function LogsTab({ s, paused, onTogglePause }) {
   );
 }
 
-function useRealTranscript(session) {
+// Polling cadence: slow when idle, fast for a short window right after a send
+// so the user's reply lands quickly instead of waiting up to a full slow tick.
+const TRANSCRIPT_SLOW_MS = 3000;
+const TRANSCRIPT_FAST_MS = 700;
+const TRANSCRIPT_FAST_WINDOW_MS = 90000;
+
+// `pendingSince` is the epoch-ms of the last send (or null). While it is recent,
+// transcript polling switches to the fast cadence to surface the reply sooner.
+function useRealTranscript(session, pendingSince) {
   const [turns, setTurns] = useS([]);
   const [loading, setLoading] = useS(false);
   const lastId = useR(null);
@@ -243,24 +251,38 @@ function useRealTranscript(session) {
       setLoading(true);
     }
 
+    let cancelled = false;
+    let timer = null;
+
     const fetchTurns = async () => {
       if (!window.CSM_API) return;
       try {
         const data = await window.CSM_API.getTranscript(id, session.nodeUrl);
-        setTurns(data);
+        if (!cancelled) setTurns(data);
       } catch {
         // keep previous turns on transient failure
       }
-      setLoading(false);
+      if (!cancelled) setLoading(false);
     };
 
-    fetchTurns();
-    // Re-fetch every 3s for active sessions so new turns appear after send
-    if (session.status === "working" || session.status === "waiting") {
-      const i = setInterval(fetchTurns, 3000);
-      return () => clearInterval(i);
-    }
-  }, [session?.sessionId, session?.id, session?.status]);
+    const active = session.status === "working" || session.status === "waiting";
+
+    // Self-scheduling loop so the interval can adapt per tick. An immediate
+    // fetch runs first (also fired right after a send, since pendingSince is
+    // a dependency), then we re-arm only for active sessions.
+    const tick = async () => {
+      await fetchTurns();
+      if (cancelled || !active) return;
+      const fast = pendingSince && Date.now() - pendingSince < TRANSCRIPT_FAST_WINDOW_MS;
+      timer = setTimeout(tick, fast ? TRANSCRIPT_FAST_MS : TRANSCRIPT_SLOW_MS);
+    };
+    tick();
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [session?.sessionId, session?.id, session?.status, pendingSince]);
 
   return { turns, loading, refresh: async () => {
     if (!window.CSM_API) return;
@@ -272,13 +294,62 @@ function useRealTranscript(session) {
   }};
 }
 
+// Count assistant turns — used as a skew-free "a new reply arrived" signal
+// (comparing counts avoids relying on browser vs. transcript clock alignment).
+function countAssistantTurns(turns) {
+  let n = 0;
+  for (const t of turns) if (t.role === "assistant") n++;
+  return n;
+}
+
 function fmtBytes(n) {
   if (n < 1024) return n + " B";
   if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
   return (n / (1024 * 1024)).toFixed(1) + " MB";
 }
 
-function TranscriptComposer({ session, onSent, onError }) {
+// Rotating "Claude is doing something" verbs, cycled to convey liveness while
+// we wait — the backend gives no real-time progress, so this is purely cosmetic.
+const CHAT_THINK_WORDS = ["Thinking", "Working", "Reading", "Processing", "Reasoning"];
+
+// Live activity indicator shown in the composer foot. `phase` is "thinking"
+// (reply in flight) or "spawning" (session still booting); `since` is epoch-ms
+// used for the elapsed timer. Renders nothing when phase is falsy.
+function ChatStatus({ phase, since }) {
+  const [dots, setDots] = useS("");
+  const [wordIdx, setWordIdx] = useS(0);
+  const [now, setNow] = useS(Date.now());
+
+  useE(() => {
+    if (!phase) return;
+    const d = setInterval(() => setDots((p) => (p.length >= 3 ? "" : p + ".")), 500);
+    const w = setInterval(() => setWordIdx((i) => i + 1), 3000);
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => { clearInterval(d); clearInterval(w); clearInterval(t); };
+  }, [phase]);
+
+  if (!phase) return null;
+
+  const label = phase === "spawning"
+    ? "Starting Claude session"
+    : CHAT_THINK_WORDS[wordIdx % CHAT_THINK_WORDS.length];
+  const elapsed = since ? Math.max(0, Math.floor((now - since) / 1000)) : 0;
+
+  return (
+    <span className="chat-status" data-phase={phase} aria-live="polite">
+      <span className="chat-status-dot" />
+      <span className="chat-status-label">{label}{dots}</span>
+      {since && (
+        <>
+          <span className="chat-status-sep">·</span>
+          <span className="chat-status-elapsed">{Pieces.fmtDuration(elapsed)}</span>
+        </>
+      )}
+    </span>
+  );
+}
+
+function TranscriptComposer({ session, phase, phaseSince, onSent, onError }) {
   const [text, setText] = useS("");
   const [sending, setSending] = useS(false);
   const [uploading, setUploading] = useS(false);
@@ -420,9 +491,15 @@ function TranscriptComposer({ session, onSent, onError }) {
         onChange={(e) => { uploadFiles(e.target.files); e.target.value = ""; }}
       />
       <div className="transcript-composer-foot">
-        <span className="transcript-composer-hint">
-          {sending ? "sending…" : uploading ? "uploading…" : stopped ? "respawn first" : "delivered via tmux paste"}
-        </span>
+        {sending || uploading ? (
+          <span className="transcript-composer-hint">{sending ? "sending…" : "uploading…"}</span>
+        ) : phase ? (
+          <ChatStatus phase={phase} since={phaseSince} />
+        ) : (
+          <span className="transcript-composer-hint">
+            {stopped ? "respawn first" : "delivered via tmux paste"}
+          </span>
+        )}
         {supportsAttachments && (
           <button
             className="btn btn-ghost"
@@ -529,10 +606,45 @@ function TranscriptTurn({ turn, nodeUrl }) {
   );
 }
 
+// Hard cap on how long the "thinking" indicator stays up with no reply, so a
+// silently dropped injection can't leave the spinner spinning forever.
+const CHAT_THINK_MAX_MS = 6 * 60 * 1000;
+// A freshly launched CSM session shows a "spawning" hint until its first turn
+// lands or this window elapses — guards against a stuck-empty session.
+const CHAT_SPAWN_WINDOW_MS = 60000;
+
 function TranscriptTab({ s, onToast }) {
-  const { turns, loading, refresh } = useRealTranscript(s);
+  // `pending` tracks an in-flight reply: when we sent and the assistant-turn
+  // count at that moment, so we can detect when a *new* reply has arrived.
+  const [pending, setPending] = useS(null); // { sentAt, baseAssistantCount } | null
+  const { turns, loading, refresh } = useRealTranscript(s, pending?.sentAt ?? null);
   const [optimistic, setOptimistic] = useS([]);
   const listRef = useR(null);
+
+  // Reset send-state when the viewed session changes.
+  useE(() => { setPending(null); }, [s.sessionId, s.id]);
+
+  // Clear the thinking indicator once a new assistant turn has arrived and the
+  // session has settled (status left "working"), or after the safety cap.
+  useE(() => {
+    if (!pending) return;
+    const newReply = countAssistantTurns(turns) > pending.baseAssistantCount;
+    const settled = s.status !== "working";
+    const expired = Date.now() - pending.sentAt > CHAT_THINK_MAX_MS;
+    if (s.status === "stopped" || expired || (newReply && settled)) {
+      setPending(null);
+    }
+  }, [turns, s.status, pending]);
+
+  // Phase shown in the composer foot. Thinking takes precedence over spawning.
+  const phase = useM(() => {
+    if (pending) return "thinking";
+    const fresh = s.launchedBy === "csm"
+      && turns.length === 0
+      && s.status !== "stopped"
+      && Date.now() - s.startedAt < CHAT_SPAWN_WINDOW_MS;
+    return fresh ? "spawning" : null;
+  }, [pending, turns.length, s.status, s.launchedBy, s.startedAt]);
 
   // When real turns catch up to optimistic ones, drop the latter
   useE(() => {
@@ -579,6 +691,8 @@ function TranscriptTab({ s, onToast }) {
 
       <TranscriptComposer
         session={s}
+        phase={phase}
+        phaseSince={pending?.sentAt ?? null}
         onSent={(text, attachments) => {
           setOptimistic((prev) => [...prev, {
             uuid: `opt-${Date.now()}`,
@@ -587,6 +701,9 @@ function TranscriptTab({ s, onToast }) {
             attachments: attachments && attachments.length ? attachments : undefined,
             t: Date.now(),
           }]);
+          // Snapshot the current assistant-turn count so we can tell when the
+          // reply to *this* message lands, and start fast polling for it.
+          setPending({ sentAt: Date.now(), baseAssistantCount: countAssistantTurns(turns) });
           const count = (attachments || []).length;
           onToast?.(count ? `Message sent · ${count} file${count === 1 ? "" : "s"}` : "Message sent");
         }}
