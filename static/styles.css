@@ -1228,6 +1228,12 @@ button { font: inherit; color: inherit; }
 @keyframes scrimin { from { opacity: 0; } to { opacity: 1; } }
 .modal {
   width: min(620px, calc(100vw - 48px));
+  /* Cap height to the viewport so a tall form (host-mode node grid +
+     recently-used tiles) can't push the footer off-screen. The body
+     scrolls; header and footer stay pinned and always visible. */
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
   background: var(--bg-elev);
   border: .5px solid var(--border-strong);
   border-radius: 14px;
@@ -1236,10 +1242,10 @@ button { font: inherit; color: inherit; }
   animation: modalin .18s cubic-bezier(.32,.72,.18,1);
 }
 @keyframes modalin { from { opacity: 0; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: none; } }
-.modal-hdr { padding: 18px 20px 4px; }
+.modal-hdr { padding: 18px 20px 4px; flex-shrink: 0; }
 .modal-hdr .t { font-size: 17px; font-weight: 500; letter-spacing: -.01em; }
 .modal-hdr .s { font-size: 13px; color: var(--text-muted); margin-top: 2px; }
-.modal-body { padding: 14px 20px 0; }
+.modal-body { padding: 14px 20px 16px; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .modal-body label { display: block; font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: .06em; color: var(--text-dim); margin: 12px 0 6px; }
 .modal-body textarea, .modal-body input.txt {
   width: 100%;
@@ -1274,8 +1280,8 @@ button { font: inherit; color: inherit; }
   display: flex; align-items: center; gap: 10px;
   padding: 16px 20px;
   border-top: .5px solid var(--border);
-  margin-top: 16px;
   background: var(--bg);
+  flex-shrink: 0;
 }
 .modal-foot .hint {
   font-size: 11px;
@@ -1765,11 +1771,9 @@ button { font: inherit; color: inherit; }
     font-size: 13px;
   }
 
-  /* Modal */
+  /* Modal — height capping & body scroll handled by the base .modal rule */
   .modal {
     width: calc(100vw - 24px);
-    max-height: calc(100vh - 48px);
-    overflow-y: auto;
   }
   .opt-grid {
     grid-template-columns: 1fr;
