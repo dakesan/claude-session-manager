@@ -44,15 +44,6 @@ function Header({ theme, onToggleTheme, query, onQuery, onNew, onOpenPalette, te
   const inputRef = useRef(null);
   const [host, setHost] = useState(window.CSM_HOSTNAME || "");
   useEffect(() => {
-    const fn = (e) => {
-      if (e.key === "/" && document.activeElement?.tagName !== "INPUT" && document.activeElement?.tagName !== "TEXTAREA") {
-        e.preventDefault(); inputRef.current?.focus();
-      }
-    };
-    window.addEventListener("keydown", fn);
-    return () => window.removeEventListener("keydown", fn);
-  }, []);
-  useEffect(() => {
     if (!host && window.CSM_HOSTNAME) setHost(window.CSM_HOSTNAME);
     const i = setInterval(() => {
       if (window.CSM_HOSTNAME && window.CSM_HOSTNAME !== host) setHost(window.CSM_HOSTNAME);
@@ -85,7 +76,6 @@ function Header({ theme, onToggleTheme, query, onQuery, onNew, onOpenPalette, te
           value={query}
           onChange={(e) => onQuery(e.target.value)}
         />
-        <span className="kbd-hint"><span className="kbd">/</span></span>
       </div>
 
       <div className="hdr-filters">
@@ -116,14 +106,14 @@ function Header({ theme, onToggleTheme, query, onQuery, onNew, onOpenPalette, te
         <a className="btn btn-ghost" href="/schedules" title="Scheduled jobs" style={{ textDecoration: "none" }}>
           Schedules
         </a>
-        <button className={"btn btn-ghost btn-icon" + (terminalOpen ? " btn-active" : "")} onClick={onToggleTerminal} title="Toggle terminal (⌘`)" aria-label="Toggle terminal">
+        <button className={"btn btn-ghost btn-icon" + (terminalOpen ? " btn-active" : "")} onClick={onToggleTerminal} title="Toggle terminal" aria-label="Toggle terminal">
           <Ico.terminal />
         </button>
         <button className="btn btn-ghost btn-icon theme-tog" onClick={onToggleTheme} title={theme === "dark" ? "Light theme" : "Dark theme"} aria-label="Toggle theme">
           {theme === "dark" ? <Ico.sun /> : <Ico.moon />}
         </button>
         <button className="btn btn-primary" onClick={onNew}>
-          <Ico.plus /> New session <span className="kbd" style={{ background: "rgba(0,0,0,.12)", border: 0, color: "inherit", opacity: .6 }}>⌘K</span>
+          <Ico.plus /> New session
         </button>
       </div>
     </header>

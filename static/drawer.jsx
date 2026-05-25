@@ -924,18 +924,6 @@ function Drawer({ session, onClose, onAction, onToast }) {
   const [menuOpen, setMenuOpen] = useS(false);
   useE(() => { setTab("transcript"); setPaused(false); setMenuOpen(false); }, [session?.id]);
 
-  useE(() => {
-    const fn = (e) => {
-      if (e.key === "Escape" && session) {
-        // Don't intercept Escape when terminal tab is active (xterm handles it)
-        if (tab === "terminal") return;
-        if (menuOpen) setMenuOpen(false);
-        else onClose();
-      }
-    };
-    window.addEventListener("keydown", fn);
-    return () => window.removeEventListener("keydown", fn);
-  }, [session, onClose, menuOpen, tab]);
 
   if (!session) return null;
   const s = session;
@@ -1125,16 +1113,6 @@ function NewSessionModal({ open, onClose, onCreate }) {
     }
   }, [open]);
 
-  useE(() => {
-    if (!open) return;
-    const fn = (e) => {
-      if (e.key === "Escape") onClose();
-      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") submit();
-    };
-    window.addEventListener("keydown", fn);
-    return () => window.removeEventListener("keydown", fn);
-  });
-
   function submit() {
     const trimmed = prompt.trim();
     if (!trimmed) return;
@@ -1235,10 +1213,6 @@ function NewSessionModal({ open, onClose, onCreate }) {
         </div>
 
         <div className="modal-foot">
-          <div className="shortcut-list">
-            <span className="item"><span className="kbd">esc</span> close</span>
-            <span className="item"><span className="kbd">⌘</span><span className="kbd">↵</span> create</span>
-          </div>
           <div className="grow" />
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
           <button className="btn btn-primary" disabled={!prompt.trim()} onClick={submit} style={{ opacity: prompt.trim() ? 1 : .5 }}>

@@ -196,19 +196,25 @@ function App() {
     showToast(`Launched ${opts.name} · ${id}`);
   }, [showToast]);
 
-  // Global shortcuts
+  // Suppress the browser's default "Backspace navigates back in history"
+  // behavior, which otherwise unmounts the whole app (the window appears to
+  // vanish) when Backspace is pressed while focus isn't on a text field —
+  // e.g. after clicking an option tile in the New Session modal. Text editing
+  // is never affected: we only preventDefault outside editable elements.
   uE(() => {
-    const fn = (e) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault(); setModalOpen(true);
-      } else if ((e.metaKey || e.ctrlKey) && e.key === ".") {
-        e.preventDefault(); setTheme((th) => th === "dark" ? "light" : "dark");
-      } else if ((e.metaKey || e.ctrlKey) && e.key === "`") {
-        e.preventDefault(); setTerminalOpen((v) => !v);
-      }
+    const guard = (e) => {
+      if (e.key !== "Backspace") return;
+      const t = e.target;
+      const editable = !!t && (
+        t.isContentEditable ||
+        t.tagName === "INPUT" ||
+        t.tagName === "TEXTAREA" ||
+        t.tagName === "SELECT"
+      );
+      if (!editable) e.preventDefault();
     };
-    window.addEventListener("keydown", fn);
-    return () => window.removeEventListener("keydown", fn);
+    window.addEventListener("keydown", guard);
+    return () => window.removeEventListener("keydown", guard);
   }, []);
 
   return (
