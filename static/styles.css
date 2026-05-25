@@ -89,7 +89,10 @@ button { font: inherit; color: inherit; }
 .app {
   display: grid;
   grid-template-columns: 1fr;
-  grid-template-rows: 60px 1fr;
+  /* Header row is auto-height so it can wrap to a second line when its
+     contents don't fit on one row (e.g. under browser/OS zoom) instead of
+     clipping the right-side actions. .hdr keeps min-height:60px. */
+  grid-template-rows: auto 1fr;
   height: 100vh;
   width: 100vw;
   position: relative;
@@ -101,8 +104,14 @@ button { font: inherit; color: inherit; }
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
+  /* Wrap to a second row when content overflows (long hostname, many
+     filters, or page zoom) so the New session button is never clipped. */
+  flex-wrap: wrap;
   gap: var(--s-3);
-  padding: 0 var(--s-4);
+  row-gap: 6px;
+  padding: 8px var(--s-4);
+  min-height: 60px;
+  box-sizing: border-box;
   border-bottom: .5px solid var(--border);
   background: var(--bg);
   position: relative;
