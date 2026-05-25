@@ -39,11 +39,15 @@ export interface NodeStatus {
 // ─── Fetch helpers ──────────────────────────────────────────────────────────
 
 const FETCH_TIMEOUT_MS = 5000;
-// createSession on the remote can block for up to ~40s (waitForTuiReady 30s
-// + captureRcUrl 10s). The default 5s timeout used to abort the proxy call
-// while the remote was still spawning, leaving the host UI to report a
-// failure for a session that actually got created.
-const CREATE_FETCH_TIMEOUT_MS = 60_000;
+// createSession on the remote can block for up to ~100s before it returns:
+// waitForTuiReady runs a 30s attempt and, on slow hosts, a second 60s retry
+// (90s total), then captureRcUrl polls for up to 10s. The previous 60s budget
+// was shorter than this worst case (it was sized for the pre-retry ~40s path),
+// so on a slow remote the host aborted the fetch mid-spawn and surfaced a 502
+// even though the session was still being created — the recurring "remote
+// session created but initial prompt never injected" symptom. Keep this
+// comfortably above the 100s ceiling.
+const CREATE_FETCH_TIMEOUT_MS = 150_000;
 
 async function fetchWithTimeout(
   url: string,
