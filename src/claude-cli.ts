@@ -799,23 +799,22 @@ export async function createSession(
       `TUI not ready after 90s — initial prompt not injected`,
     );
   } else {
-    const normalized = prompt.replace(/\r\n/g, "\n");
-    const bufName = `csm-init-${sid}-${Date.now()}`;
-    let stage = "load-buffer";
-    try {
-      // load-buffer reads from stdin, bypassing tmux's command-parser
-      // length cap that "set-buffer -- <data>" hits for large prompts.
-      await tmuxLoadBuffer(bufName, normalized);
-      stage = "paste-buffer";
-      await execFileAsync(TMUX_BIN, ["paste-buffer", "-p", "-d", "-b", bufName, "-t", tmuxSession]);
-      stage = "send-keys";
-      await execFileAsync(TMUX_BIN, ["send-keys", "-t", tmuxSession, "Enter"]);
-    } catch (e) {
+    const result = await injectInitialPrompt(tmuxSession, sid, prompt);
+    if (!result.ok) {
       await logLifecycle(
         sessionId,
         rcName,
         "prompt-send-failed",
-        `stage=${stage} bytes=${Buffer.byteLength(normalized)} ${formatExecError(e)}`,
+        result.detail,
+      );
+    } else if (result.attempts > 1) {
+      // Surface the race so we can tell when the verify-and-retry path is
+      // actually doing work (i.e. the first paste was swallowed during init).
+      await logLifecycle(
+        sessionId,
+        rcName,
+        "prompt-reinjected",
+        `landed after ${result.attempts} attempts`,
       );
     }
   }
@@ -1020,6 +1019,92 @@ async function waitForTuiReady(
     await new Promise((resolve) => setTimeout(resolve, interval));
   }
   return false;
+}
+
+/**
+ * Inject the initial prompt into a freshly launched claude TUI, verifying it
+ * actually landed before submitting.
+ *
+ * The naive "paste then Enter" is unreliable on remote nodes: claude renders
+ * the "❯" input cursor early, but then keeps initializing (MCP servers,
+ * SessionStart hooks). A paste during that window is silently discarded, so
+ * the session comes up idle with the prompt never delivered — the recurring
+ * "initial prompt not injected" bug. Here we paste, confirm a distinctive
+ * slice of the prompt is visible in the input box, and only then press Enter,
+ * retrying the paste if it was swallowed.
+ */
+async function injectInitialPrompt(
+  tmuxSession: string,
+  sid: string,
+  prompt: string,
+): Promise<{ ok: boolean; attempts: number; detail: string }> {
+  const normalized = prompt.replace(/\r\n/g, "\n");
+  const bytes = Buffer.byteLength(normalized);
+  const firstLine =
+    normalized.split("\n").find((l) => l.trim().length > 0) ?? normalized;
+  // A short, distinctive slice of the prompt to look for in the pane as proof
+  // the paste landed. Empty only for an all-whitespace prompt.
+  const probe = firstLine.trim().slice(0, 24);
+
+  const capture = async (): Promise<string> => {
+    try {
+      const { stdout } = await execAsync(
+        `${TMUX_BIN} capture-pane -t '${tmuxSession}' -p`,
+      );
+      return stdout;
+    } catch {
+      return "";
+    }
+  };
+  const sleep = (ms: number) =>
+    new Promise((resolve) => setTimeout(resolve, ms));
+
+  const maxAttempts = 6;
+  let stage = "load-buffer";
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      // Re-paste only if the prompt is not already sitting in the input box,
+      // so a paste that did land is never doubled.
+      const present = probe.length > 0 && (await capture()).includes(probe);
+      if (!present) {
+        const bufName = `csm-init-${sid}-${Date.now()}`;
+        stage = "load-buffer";
+        // load-buffer reads from stdin, bypassing tmux's command-parser length
+        // cap that "set-buffer -- <data>" hits for large prompts.
+        await tmuxLoadBuffer(bufName, normalized);
+        stage = "paste-buffer";
+        await execFileAsync(TMUX_BIN, [
+          "paste-buffer", "-p", "-d", "-b", bufName, "-t", tmuxSession,
+        ]);
+        // Let the input box absorb the bracketed paste before we check.
+        await sleep(700);
+      }
+
+      // Commit only once the paste is verified visible. With no probe (an
+      // all-whitespace prompt) we cannot verify, so we trust the paste.
+      const landed = probe.length === 0 || (await capture()).includes(probe);
+      if (landed) {
+        stage = "send-keys";
+        await execFileAsync(TMUX_BIN, [
+          "send-keys", "-t", tmuxSession, "Enter",
+        ]);
+        return { ok: true, attempts: attempt, detail: "" };
+      }
+    } catch (e) {
+      return {
+        ok: false,
+        attempts: attempt,
+        detail: `stage=${stage} bytes=${bytes} ${formatExecError(e)}`,
+      };
+    }
+    // Paste was swallowed mid-init; wait for the TUI to settle, then retry.
+    await sleep(1200);
+  }
+  return {
+    ok: false,
+    attempts: maxAttempts,
+    detail: `prompt not visible in input after ${maxAttempts} paste attempts; bytes=${bytes}`,
+  };
 }
 
 /**
