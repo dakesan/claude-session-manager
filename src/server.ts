@@ -111,7 +111,17 @@ app.post("/api/sessions", async (c) => {
     if (!targetNode) return c.json({ error: `Unknown node: ${body.node}` }, 400);
 
     const result = await remote.proxyCreate(targetNode.url, body.prompt, body.name, body.cwd, body.model);
-    if (!result) return c.json({ error: `Failed to create session on ${body.node}` }, 502);
+    if (!result) {
+      // Record the failure on the host: a failed remote spawn otherwise leaves
+      // no trace here, which is exactly what made the "remote session created
+      // but prompt never injected" symptom so hard to diagnose.
+      await cli.logProxyEvent(
+        body.node,
+        "proxy-create-failed",
+        `name=${body.name ?? "(none)"} cwd=${body.cwd ?? "(default)"}`,
+      );
+      return c.json({ error: `Failed to create session on ${body.node}` }, 502);
+    }
     return c.json({ ...result, node: body.node, nodeUrl: targetNode.url }, 201);
   }
 
