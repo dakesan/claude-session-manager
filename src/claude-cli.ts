@@ -198,26 +198,46 @@ async function tmuxLoadBuffer(bufName: string, content: string): Promise<void> {
 }
 
 /** Append a timestamped entry to the session lifecycle log */
-async function logLifecycle(
-  sessionId: string,
-  name: string | undefined,
-  event: string,
-  detail?: string,
-): Promise<void> {
+async function appendLifecycleLine(line: string): Promise<void> {
   const logDir = getLogDir();
   try {
     await mkdir(logDir, { recursive: true });
   } catch {
     // already exists
   }
-  const ts = new Date().toISOString();
-  const sid = shortId(sessionId);
-  const line = `${ts}  ${event.padEnd(18)}  ${sid}  ${name || "(unnamed)"}${detail ? "  " + detail : ""}\n`;
   try {
     await appendFile(join(logDir, "lifecycle.log"), line);
   } catch {
     // best-effort logging
   }
+}
+
+async function logLifecycle(
+  sessionId: string,
+  name: string | undefined,
+  event: string,
+  detail?: string,
+): Promise<void> {
+  const ts = new Date().toISOString();
+  const sid = shortId(sessionId);
+  const line = `${ts}  ${event.padEnd(18)}  ${sid}  ${name || "(unnamed)"}${detail ? "  " + detail : ""}\n`;
+  await appendLifecycleLine(line);
+}
+
+/**
+ * Log a host-side proxy event to the same lifecycle.log. Proxy failures (e.g.
+ * a remote createSession that timed out or returned non-2xx) have no local
+ * sessionId, so we record the target node instead. Without this, a failed
+ * remote spawn left no trace on the host and was hard to diagnose.
+ */
+export async function logProxyEvent(
+  node: string,
+  event: string,
+  detail?: string,
+): Promise<void> {
+  const ts = new Date().toISOString();
+  const line = `${ts}  ${event.padEnd(18)}  --------  node:${node}${detail ? "  " + detail : ""}\n`;
+  await appendLifecycleLine(line);
 }
 
 /**
@@ -800,16 +820,9 @@ export async function createSession(
     }
   }
 
-  // Extract Remote Control URL from tmux pane output
-  // Claude prints something like "https://claude.ai/code/session_..." when RC starts
-  let rcUrl: string | undefined;
-  try {
-    rcUrl = await captureRcUrl(tmuxSession, 10);
-  } catch {
-    // RC URL extraction failed — non-fatal
-  }
-
-  // Persist session metadata for CSM tracking
+  // Persist session metadata for CSM tracking. The Remote Control URL is
+  // captured asynchronously below (it can take up to 10s to appear), so the
+  // metadata starts without it and is patched in the background.
   const csmDir = getCsmDir();
   if (!existsSync(csmDir)) {
     await mkdir(csmDir, { recursive: true });
@@ -823,7 +836,7 @@ export async function createSession(
     cwd: workDir,
     createdAt: new Date().toISOString(),
     tmuxSession,
-    rcUrl: rcUrl || undefined,
+    rcUrl: undefined as string | undefined,
     model: undefined,
     scheduleId: scheduleId || undefined,
     launchedBy: "csm" as const,
@@ -846,7 +859,7 @@ export async function createSession(
     cwd: workDir,
     createdAt: meta.createdAt,
     pid,
-    rcUrl,
+    rcUrl: undefined,
     scheduleId: scheduleId || undefined,
     lifecycleState: "active",
     launchedBy: "csm",
@@ -855,7 +868,35 @@ export async function createSession(
   // Seed initial state for transition detection
   _prevStates.set(sessionId, "working");
 
+  // Capture the Remote Control URL in the background and patch the metadata
+  // file once it appears. Returning before this keeps the create response
+  // fast (the prompt is already injected) and shaves the captureRcUrl tail
+  // (up to 10s) off the proxy round-trip — the session list picks up rcUrl on
+  // its next poll. Fire-and-forget: failures are non-fatal.
+  void captureRcUrlInBackground(sessionId, tmuxSession);
+
   return session;
+}
+
+/**
+ * Poll the tmux pane for the Remote Control URL after a session is created and
+ * write it back to the session's metadata file. Runs detached from
+ * createSession so the create response is not blocked by the capture.
+ */
+async function captureRcUrlInBackground(
+  sessionId: string,
+  tmuxSession: string,
+): Promise<void> {
+  try {
+    const rcUrl = await captureRcUrl(tmuxSession, 10);
+    if (!rcUrl) return;
+    const meta = await readCsmMeta(sessionId);
+    if (!meta) return;
+    meta.rcUrl = rcUrl;
+    await writeCsmMeta(sessionId, meta);
+  } catch {
+    // RC URL extraction failed — non-fatal, refreshRcUrl can retry later.
+  }
 }
 
 export async function stopSession(id: string): Promise<boolean> {

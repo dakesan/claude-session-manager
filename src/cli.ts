@@ -190,19 +190,35 @@ wss.on("connection", (ws: WsWebSocket, req) => {
   const cols = parseInt(url.searchParams.get("cols") || "120", 10);
   const rows = parseInt(url.searchParams.get("rows") || "30", 10);
 
-  // Spawn a login shell via node-pty
+  // Spawn a login shell via node-pty. pty.spawn throws synchronously when the
+  // OS cannot fork (e.g. "posix_spawnp failed" under fd/process pressure).
+  // That exception is raised inside this ws event handler, so if it escapes it
+  // becomes an uncaughtException and takes the whole server down — killing all
+  // in-flight requests, including remote session proxying. Contain it: report
+  // to the client and close this socket instead of crashing the process.
   const shell = process.env.SHELL || "/bin/bash";
-  const ptyProcess = pty.spawn(shell, ["-l"], {
-    name: "xterm-256color",
-    cols,
-    rows,
-    cwd,
-    env: {
-      ...process.env,
-      TERM: "xterm-256color",
-      COLORTERM: "truecolor",
-    } as Record<string, string>,
-  });
+  let ptyProcess: pty.IPty;
+  try {
+    ptyProcess = pty.spawn(shell, ["-l"], {
+      name: "xterm-256color",
+      cols,
+      rows,
+      cwd,
+      env: {
+        ...process.env,
+        TERM: "xterm-256color",
+        COLORTERM: "truecolor",
+      } as Record<string, string>,
+    });
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    console.error(`[csm] pty.spawn failed for cwd=${cwd}: ${detail}`);
+    if (ws.readyState === ws.OPEN) {
+      ws.send(`\r\n[Failed to open terminal: ${detail}]\r\n`);
+      ws.close();
+    }
+    return;
+  }
 
   // PTY → Browser
   ptyProcess.onData((data: string) => {
