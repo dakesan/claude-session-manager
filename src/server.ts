@@ -262,6 +262,9 @@ app.post("/api/sessions/:id/message", async (c) => {
   if (result.reason === "no_tmux") {
     return c.json({ error: "No tmux pane found for session" }, 409);
   }
+  if (result.reason === "respawn_failed") {
+    return c.json({ error: "Failed to respawn idle-stopped session" }, 502);
+  }
   return c.json({ error: result.detail || "tmux send failed" }, 500);
 });
 

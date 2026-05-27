@@ -89,6 +89,8 @@ export interface Session {
   scheduleId?: string;
   /** ISO timestamp when the session was archived (sticky flag) */
   archivedAt?: string;
+  /** ISO timestamp when the idle sweep auto-stopped the session; cleared on respawn */
+  idleStoppedAt?: string;
   /** ISO timestamp of the last jsonl activity (mtime); undefined if jsonl is gone */
   lastActivityAt?: string;
   /** Derived lifecycle category */
@@ -411,6 +413,7 @@ async function readCsmSessions(): Promise<Session[]> {
         rcUrl: data.rcUrl,
         scheduleId: typeof data.scheduleId === "string" ? data.scheduleId : undefined,
         archivedAt: typeof data.archivedAt === "string" ? data.archivedAt : undefined,
+        idleStoppedAt: typeof data.idleStoppedAt === "string" ? data.idleStoppedAt : undefined,
         launchedBy,
       });
     } catch {
@@ -1253,8 +1256,8 @@ export async function respawnSession(id: string): Promise<boolean> {
     // Capture RC URL (always overwrite — old URL is invalid after respawn)
     const rcUrl = await captureRcUrl(tmuxSession, 10);
 
-    // Update the CSM metadata file (also clears archivedAt — a respawned
-    // session is by definition active again)
+    // Update the CSM metadata file (also clears archivedAt and idleStoppedAt —
+    // a respawned session is by definition active again)
     const csmFile = join(getCsmDir(), `${session.sessionId}.json`);
     if (existsSync(csmFile)) {
       const raw = JSON.parse(await readFile(csmFile, "utf-8"));
@@ -1262,6 +1265,7 @@ export async function respawnSession(id: string): Promise<boolean> {
       raw.tmuxSession = tmuxSession;
       if (rcUrl) raw.rcUrl = rcUrl;
       delete raw.archivedAt;
+      delete raw.idleStoppedAt;
       await writeFile(csmFile, JSON.stringify(raw, null, 2));
     }
 
@@ -1342,6 +1346,53 @@ export async function runArchiveSweep(): Promise<{ archived: number }> {
     archived++;
   }
   return { archived };
+}
+
+/**
+ * Walk all local sessions and stop (kill the claude process of) any that have
+ * been idle — sitting in the "waiting" state past idleTimeoutMinutes. Stopped
+ * sessions are tagged with `idleStoppedAt` so the next message can transparently
+ * respawn them via `--resume` (see sendMessage). Returns how many were stopped.
+ *
+ * Only CSM-launched, tmux-backed sessions are eligible: those are the ones we
+ * can bring back. "working" sessions (Claude actively processing) are never
+ * touched so a long-running task is not interrupted. Disabled when
+ * idleTimeoutMinutes <= 0.
+ */
+export async function runIdleSweep(
+  nowMs: number = Date.now(),
+): Promise<{ stopped: number }> {
+  const timeoutMin = CONFIG.lifecycle.idleTimeoutMinutes;
+  if (timeoutMin <= 0) return { stopped: 0 };
+  const ttl = timeoutMin * 60 * 1000;
+
+  const sessions = await listSessions();
+  let stopped = 0;
+  for (const s of sessions) {
+    if (s.state !== "waiting") continue;
+    if (!s.tmuxSession) continue; // not tmux-backed → cannot respawn
+    if (s.launchedBy !== "csm") continue; // only sessions CSM spawned
+    if (!s.lastActivityAt) continue;
+    const lastMs = new Date(s.lastActivityAt).getTime();
+    if (!Number.isFinite(lastMs)) continue;
+    if (nowMs - lastMs <= ttl) continue;
+
+    const ok = await stopSession(s.shortId);
+    if (!ok) continue;
+    const meta = await readCsmMeta(s.sessionId);
+    if (meta) {
+      meta.idleStoppedAt = new Date().toISOString();
+      await writeCsmMeta(s.sessionId, meta);
+    }
+    await logLifecycle(
+      s.sessionId,
+      s.name,
+      "idle-stopped",
+      `idle ${Math.round((nowMs - lastMs) / 60000)}min (lastActivity=${s.lastActivityAt})`,
+    );
+    stopped++;
+  }
+  return { stopped };
 }
 
 export async function removeSession(id: string): Promise<boolean> {
@@ -1570,7 +1621,11 @@ export async function getTranscript(id: string): Promise<TranscriptTurn[]> {
 
 export type SendMessageResult =
   | { ok: true }
-  | { ok: false; reason: "not_found" | "stopped" | "no_tmux" | "tmux_failed"; detail?: string };
+  | {
+      ok: false;
+      reason: "not_found" | "stopped" | "no_tmux" | "tmux_failed" | "respawn_failed";
+      detail?: string;
+    };
 
 /**
  * Inject a prompt into a running session's tmux pane.
@@ -1585,9 +1640,41 @@ export async function sendMessage(
   id: string,
   prompt: string,
 ): Promise<SendMessageResult> {
-  const session = await getSession(id);
+  let session = await getSession(id);
   if (!session) return { ok: false, reason: "not_found" };
-  if (session.state === "stopped") return { ok: false, reason: "stopped" };
+  if (session.state === "stopped") {
+    const meta = await readCsmMeta(session.sessionId);
+    // Only sessions auto-stopped by the idle sweep are transparently revived.
+    // A session the user explicitly stopped still requires an explicit respawn.
+    if (!meta?.idleStoppedAt) return { ok: false, reason: "stopped" };
+
+    const revived = await respawnSession(id);
+    if (!revived) return { ok: false, reason: "respawn_failed" };
+    session = await getSession(id);
+    if (!session) return { ok: false, reason: "not_found" };
+
+    const tmuxSession = await getTmuxSessionName(session);
+    if (!tmuxSession) return { ok: false, reason: "no_tmux" };
+    // Route the post-respawn send through the verified paste used at spawn time:
+    // a freshly resumed TUI is more prone to swallowing a paste mid-load.
+    const r = await injectInitialPrompt(tmuxSession, session.shortId, prompt);
+    if (r.ok) {
+      await logLifecycle(
+        session.sessionId,
+        session.name,
+        "message-sent",
+        `len=${prompt.length} (post-respawn, attempts=${r.attempts})`,
+      );
+      return { ok: true };
+    }
+    await logLifecycle(
+      session.sessionId,
+      session.name,
+      "message-send-failed",
+      `post-respawn ${r.detail}`,
+    );
+    return { ok: false, reason: "tmux_failed", detail: r.detail };
+  }
 
   const tmuxSession = await getTmuxSessionName(session);
   if (!tmuxSession) return { ok: false, reason: "no_tmux" };

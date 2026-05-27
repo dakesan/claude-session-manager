@@ -48,6 +48,12 @@ const FETCH_TIMEOUT_MS = 5000;
 // session created but initial prompt never injected" symptom. Keep this
 // comfortably above the 100s ceiling.
 const CREATE_FETCH_TIMEOUT_MS = 150_000;
+// A message to an idle-stopped remote session triggers a transparent respawn
+// (--resume + waitForTuiReady, up to ~90s) before the send completes, so this
+// must comfortably exceed that ceiling. Normal messages return in well under a
+// second; the only downside of the larger budget is slower detection of a
+// genuinely unreachable remote on the message path.
+const MESSAGE_FETCH_TIMEOUT_MS = 150_000;
 
 async function fetchWithTimeout(
   url: string,
@@ -284,6 +290,7 @@ export async function proxyMessage(
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt }),
       },
+      MESSAGE_FETCH_TIMEOUT_MS,
     );
     const body = await res.json().catch(() => ({}));
     return { ok: res.ok, status: res.status, body };

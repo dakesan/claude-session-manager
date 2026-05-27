@@ -36,6 +36,15 @@ dangerously_skip_permissions = true
 # How often the archive sweep runs.
 # cleanup_interval_minutes = 60
 
+# Auto-stop (kill the claude process) a session that has been sitting in the
+# "waiting" state — i.e. idle, awaiting user input — for this many minutes.
+# The next message to such a session transparently `claude --resume`s it.
+# Set to 0 to disable idle auto-stop entirely.
+# idle_timeout_minutes = 60
+
+# How often the idle sweep runs.
+# idle_check_interval_minutes = 5
+
 # ─── Multi-node configuration (host mode only) ──────────────────────────────
 # Add [[remotes]] entries for each CSM node to aggregate.
 # Each node must be running CSM and accessible from this host.

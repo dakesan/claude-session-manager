@@ -292,4 +292,27 @@ server.listen(port, host, () => {
       `(TTL: ${CONFIG.lifecycle.archiveAfterDays}d normal / ` +
       `${CONFIG.lifecycle.archiveAfterDaysScheduled}d scheduled)`,
   );
+
+  // Periodic idle sweep: sessions waiting on user input past the idle timeout
+  // get their claude process stopped (and tagged idleStoppedAt). The next
+  // message to such a session transparently respawns it via --resume.
+  if (CONFIG.lifecycle.idleTimeoutMinutes > 0) {
+    const idleMs = CONFIG.lifecycle.idleCheckIntervalMinutes * 60 * 1000;
+    const runIdleSweep = async () => {
+      try {
+        const result = await cli.runIdleSweep();
+        if (result.stopped > 0) {
+          console.log(`[lifecycle] idle-stopped ${result.stopped} session(s)`);
+        }
+      } catch (e) {
+        console.error("[lifecycle] idle sweep failed:", e);
+      }
+    };
+    void runIdleSweep();
+    setInterval(runIdleSweep, idleMs);
+    console.log(
+      `  Idle sweep every ${CONFIG.lifecycle.idleCheckIntervalMinutes}min ` +
+        `(timeout: ${CONFIG.lifecycle.idleTimeoutMinutes}min waiting → auto-stop)`,
+    );
+  }
 });

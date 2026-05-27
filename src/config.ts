@@ -45,6 +45,10 @@ export interface CsmConfig {
     archiveAfterDaysScheduled: number;
     /** How often the cleanup sweep runs */
     cleanupIntervalMinutes: number;
+    /** Minutes a session may sit in "waiting" before it is auto-stopped (0 disables) */
+    idleTimeoutMinutes: number;
+    /** How often the idle sweep runs */
+    idleCheckIntervalMinutes: number;
   };
   /** Remote CSM nodes to aggregate (only used when mode = "host") */
   remotes: RemoteNode[];
@@ -100,6 +104,8 @@ export function loadConfig(): CsmConfig {
       archiveAfterDays: 7,
       archiveAfterDaysScheduled: 3,
       cleanupIntervalMinutes: 60,
+      idleTimeoutMinutes: 60,
+      idleCheckIntervalMinutes: 5,
     },
     remotes: [],
   };
@@ -150,6 +156,18 @@ export function loadConfig(): CsmConfig {
           lifecycle.cleanup_interval_minutes >= 1
         ) {
           config.lifecycle.cleanupIntervalMinutes = lifecycle.cleanup_interval_minutes;
+        }
+        if (
+          typeof lifecycle.idle_timeout_minutes === "number" &&
+          lifecycle.idle_timeout_minutes >= 0
+        ) {
+          config.lifecycle.idleTimeoutMinutes = lifecycle.idle_timeout_minutes;
+        }
+        if (
+          typeof lifecycle.idle_check_interval_minutes === "number" &&
+          lifecycle.idle_check_interval_minutes >= 1
+        ) {
+          config.lifecycle.idleCheckIntervalMinutes = lifecycle.idle_check_interval_minutes;
         }
       }
 
